@@ -9,14 +9,18 @@
 
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include "inha_interfaces/action/approach.hpp"
 #include <Eigen/Dense>
+#include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/twist.hpp>
+#include <nav_msgs/msg/path.hpp>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/search/kdtree.h>
@@ -70,6 +74,8 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr obb_publisher_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr
       target_edge_publisher_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr trail_publisher_;
+  rclcpp::TimerBase::SharedPtr trail_timer_;
 
   rclcpp::QoS qos_best_effort_;
   rclcpp::QoS qos_reliable_;
@@ -77,6 +83,7 @@ private:
   std::string pointcloud_topic_name_;
   std::string info_topic_name_;
   std::string target_frame_;
+  std::string odom_frame_;
   bool received_camera_info_ = false;
   float roi_x_min_ = 0.1F;
   float roi_x_max_ = 2.0F;
@@ -112,7 +119,6 @@ private:
   std::size_t debug_cloud_index_ = 0;
   std::size_t measure_cycle_ = 0;
 
-  std::string main_target;
   bool start_time_flag = false;
   rclcpp::Time start_time;
   rclcpp::Time previous_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
@@ -137,6 +143,12 @@ private:
   // EMA 저역통과 필터 (측정 노이즈 제거)
   float error_ema_alpha_ = 0.25F;   // 낮을수록 강한 필터. 0~1
 
+  // 후진용 trail 기록 (odom 프레임 기준 base 위치 시퀀스)
+  std::deque<geometry_msgs::msg::PoseStamped> trail_;
+  std::mutex trail_mutex_;
+  float trail_min_dist_ = 0.03F;   // arc-length 다운샘플 거리 임계 (m)
+  float trail_min_yaw_ = 0.052F;   // arc-length 다운샘플 yaw 임계 (rad, ~3deg)
+
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud;
   pcl::search::KdTree<pcl::PointXYZ>::Ptr kdtree;
   tf2_ros::Buffer tf_buffer_;
@@ -157,4 +169,7 @@ private:
   void publishTargetEdge(const TargetEdge &target_edge);
   void saveDebugCloud(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
                       const std::string &stage);
+
+  void recordTrailPose();
+  void publishTrail();
 };

@@ -8,8 +8,12 @@
 #include <utility>
 #include <vector>
 
+#include <cmath>
+
 #include <pcl/io/pcd_io.h>
 #include <pcl_conversions/pcl_conversions.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2/utils.h>
 
 namespace {
 
@@ -92,6 +96,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->declare_parameter<std::string>("info_topic_name",
                                        "/camera/camera_head/color/camera_info");
   this->declare_parameter<std::string>("target_frame", "base");
+  this->declare_parameter<std::string>("odom_frame", "odom");
   this->declare_parameter<float>("roi_x_min", 0.1F);
   this->declare_parameter<float>("roi_x_max", 2.0F);
   this->declare_parameter<float>("roi_y_abs_max", 0.8F);
@@ -124,10 +129,13 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->declare_parameter<float>("spike_dtheta_max", 0.25F);
   this->declare_parameter<int>("max_consecutive_outliers", 5);
   this->declare_parameter<float>("error_ema_alpha", 0.25F);
+  this->declare_parameter<float>("trail_min_dist", 0.03F);
+  this->declare_parameter<float>("trail_min_yaw", 0.052F);
 
   this->get_parameter("pointcloud_topic_name", pointcloud_topic_name_);
   this->get_parameter("info_topic_name", info_topic_name_);
   this->get_parameter("target_frame", target_frame_);
+  this->get_parameter("odom_frame", odom_frame_);
   this->get_parameter("roi_x_min", roi_x_min_);
   this->get_parameter("roi_x_max", roi_x_max_);
   this->get_parameter("roi_y_abs_max", roi_y_abs_max_);
@@ -160,6 +168,8 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->get_parameter("spike_dtheta_max", spike_dtheta_max_);
   this->get_parameter("max_consecutive_outliers", max_consecutive_outliers_);
   this->get_parameter("error_ema_alpha", error_ema_alpha_);
+  this->get_parameter("trail_min_dist", trail_min_dist_);
+  this->get_parameter("trail_min_yaw", trail_min_yaw_);
 
   /*
   ROS2 Publisher && Subscriber 설정
@@ -194,6 +204,20 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
           "/approach/debugging_pointcloud", qos_best_effort_);
 
   /*
+  후진용 trail publisher (transient_local + reliable: 늦게 뜬 retreat_node도
+  최신 trail 한 번 받음). odom 프레임 기준 base 위치 시퀀스.
+  */
+  rclcpp::QoS trail_qos(rclcpp::KeepLast(1));
+  trail_qos.reliable();
+  trail_qos.transient_local();
+  trail_publisher_ =
+      this->create_publisher<nav_msgs::msg::Path>("/approach/trail", trail_qos);
+
+  trail_timer_ = this->create_wall_timer(
+      std::chrono::milliseconds(50),
+      std::bind(&ApproachNode::recordTrailPose, this));
+
+  /*
   파라미터설정
   */
   roi_filter_->setParameters(leaf_size_, mean_k_, stddev_mul_thresh_,
@@ -209,9 +233,9 @@ Ros2 Action 관련 함수들
 rclcpp_action::GoalResponse
 ApproachNode::handle_goal(const rclcpp_action::GoalUUID &uuid,
                           std::shared_ptr<const ApproachAction::Goal> goal) {
+  (void)uuid;
+  (void)goal;
   RCLCPP_INFO(this->get_logger(), "Received approach goal");
-  main_target = goal->main_target;
-
   return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
 
@@ -655,6 +679,10 @@ void ApproachNode::saveDebugCloud(
 }
 
 void ApproachNode::stopAlgorithm() {
+  // trail은 이번 approach가 끝난 시점에 latched로 한 번 발행해서
+  // RetreatNode가 후진 액션 시 사용할 수 있도록 한다.
+  publishTrail();
+
   point_cloud_subscriber_.reset();
 
   start_time_flag = false;
@@ -664,6 +692,11 @@ void ApproachNode::stopAlgorithm() {
 }
 
 void ApproachNode::startAlgorithm() {
+  {
+    std::lock_guard<std::mutex> lock(trail_mutex_);
+    trail_.clear();
+  }
+
   point_cloud_subscriber_ = this->create_subscription<PointCloudMsg>(
       pointcloud_topic_name_, qos_best_effort_,
       std::bind(&ApproachNode::pointCloudCallback, this,
@@ -674,6 +707,62 @@ void ApproachNode::startAlgorithm() {
   control_failure = false;
 
   algorithm_start_flag = true;
+}
+
+void ApproachNode::recordTrailPose() {
+  if (!algorithm_start_flag) {
+    return;
+  }
+
+  geometry_msgs::msg::TransformStamped tf;
+  try {
+    tf = tf_buffer_.lookupTransform(odom_frame_, target_frame_,
+                                    tf2::TimePointZero,
+                                    tf2::durationFromSec(0.05));
+  } catch (const tf2::TransformException &ex) {
+    RCLCPP_DEBUG(this->get_logger(), "trail TF lookup failed: %s", ex.what());
+    return;
+  }
+
+  geometry_msgs::msg::PoseStamped pose;
+  pose.header = tf.header;
+  pose.pose.position.x = tf.transform.translation.x;
+  pose.pose.position.y = tf.transform.translation.y;
+  pose.pose.position.z = tf.transform.translation.z;
+  pose.pose.orientation = tf.transform.rotation;
+
+  std::lock_guard<std::mutex> lock(trail_mutex_);
+  if (trail_.empty()) {
+    trail_.push_back(pose);
+    return;
+  }
+  const auto &last = trail_.back().pose;
+  const float dx = static_cast<float>(pose.pose.position.x - last.position.x);
+  const float dy = static_cast<float>(pose.pose.position.y - last.position.y);
+  const float dist = std::sqrt(dx * dx + dy * dy);
+  const double yaw_now = tf2::getYaw(pose.pose.orientation);
+  const double yaw_last = tf2::getYaw(last.orientation);
+  double dyaw = yaw_now - yaw_last;
+  while (dyaw > M_PI) dyaw -= 2.0 * M_PI;
+  while (dyaw < -M_PI) dyaw += 2.0 * M_PI;
+
+  if (dist >= trail_min_dist_ ||
+      std::abs(dyaw) >= static_cast<double>(trail_min_yaw_)) {
+    trail_.push_back(pose);
+  }
+}
+
+void ApproachNode::publishTrail() {
+  nav_msgs::msg::Path path;
+  {
+    std::lock_guard<std::mutex> lock(trail_mutex_);
+    path.poses.assign(trail_.begin(), trail_.end());
+  }
+  path.header.stamp = this->now();
+  path.header.frame_id = odom_frame_;
+  trail_publisher_->publish(path);
+  RCLCPP_INFO(this->get_logger(), "Published approach trail: %zu poses",
+              path.poses.size());
 }
 
 void ApproachNode::applySpatialRoi(

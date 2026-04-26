@@ -48,6 +48,7 @@ add_executable(approach_node ${APPROACH_CPP_SOURCES})
 add_executable(approach_head_control_node ${APPROACH_HEAD_CONTROL_CPP_SOURCES})
 add_executable(accumulation_and_icp_node src/accumulation_and_icp.cpp)
 add_executable(align_to_person_node ${ALIGN_PERSON_CPP_SOURCES})
+add_executable(retreat_node src/retreat.cpp)
 
 target_include_directories(approach_node
   PUBLIC
@@ -79,10 +80,17 @@ target_include_directories(align_to_person_node
     ${PCL_INCLUDE_DIRS}
 )
 
+target_include_directories(retreat_node
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
 target_compile_features(approach_node PUBLIC cxx_std_17)
 target_compile_features(approach_head_control_node PUBLIC cxx_std_17)
 target_compile_features(accumulation_and_icp_node PUBLIC cxx_std_17)
 target_compile_features(align_to_person_node PUBLIC cxx_std_17)
+target_compile_features(retreat_node PUBLIC cxx_std_17)
 
 target_link_libraries(approach_node
   ${PCL_LIBRARIES}
@@ -132,6 +140,7 @@ target_compile_definitions(align_to_person_node
 ament_target_dependencies(approach_node
   geometry_msgs
   message_filters
+  nav_msgs
   pcl_conversions
   rclcpp
   rclcpp_action
@@ -140,6 +149,16 @@ ament_target_dependencies(approach_node
   tf2_ros
   vision_msgs
   visualization_msgs
+  inha_interfaces
+)
+
+ament_target_dependencies(retreat_node
+  geometry_msgs
+  nav_msgs
+  rclcpp
+  rclcpp_action
+  tf2
+  tf2_ros
   inha_interfaces
 )
 
@@ -193,6 +212,7 @@ target_compile_features(approach_node PUBLIC cxx_std_17)
 target_compile_features(approach_head_control_node PUBLIC cxx_std_17)
 target_compile_features(accumulation_and_icp_node PUBLIC cxx_std_17)
 target_compile_features(align_to_person_node PUBLIC cxx_std_17)
+target_compile_features(retreat_node PUBLIC cxx_std_17)
 
 # target_compile_definitions(align_to_person_node
 #   PRIVATE
@@ -210,6 +230,7 @@ install(
   approach_head_control_node
   accumulation_and_icp_node
   align_to_person_node
+  retreat_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -31,6 +31,8 @@
 #include <tf2/time.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+
 #include <visualization_msgs/msg/marker.hpp>
 
 class ApproachNode : public rclcpp::Node {
@@ -139,9 +141,6 @@ private:
   float spike_dy_max_ = 0.25F;      // 한 사이클당 허용 y 변화 (m)
   float spike_dtheta_max_ = 0.25F;  // 한 사이클당 허용 theta 변화 (rad)
   int max_consecutive_outliers_ = 5; // 연속으로 이만큼 튀면 받아들임(씬 변경)
-
-  // EMA 저역통과 필터 (측정 노이즈 제거)
-  float error_ema_alpha_ = 0.25F;   // 낮을수록 강한 필터. 0~1
 
   // 후진용 trail 기록 (odom 프레임 기준 base 위치 시퀀스)
   std::deque<geometry_msgs::msg::PoseStamped> trail_;

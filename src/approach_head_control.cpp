@@ -209,10 +209,10 @@ int determine_zone(float x) {
 
     if (zone == 0) {
       target_head_0 = 0.0f;
-      target_head_1 = 30.0f;
+      target_head_1 = 20.0f;
     } else if (zone == 1) {
       target_head_0 = 0.0f;
-      target_head_1 = 50.0f;
+      target_head_1 = 35.0f;
     } else {
       return;
     }

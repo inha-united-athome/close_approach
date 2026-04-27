@@ -128,7 +128,6 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->declare_parameter<float>("spike_dy_max", 0.25F);
   this->declare_parameter<float>("spike_dtheta_max", 0.25F);
   this->declare_parameter<int>("max_consecutive_outliers", 5);
-  this->declare_parameter<float>("error_ema_alpha", 0.25F);
   this->declare_parameter<float>("trail_min_dist", 0.03F);
   this->declare_parameter<float>("trail_min_yaw", 0.052F);
 
@@ -167,7 +166,6 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->get_parameter("spike_dy_max", spike_dy_max_);
   this->get_parameter("spike_dtheta_max", spike_dtheta_max_);
   this->get_parameter("max_consecutive_outliers", max_consecutive_outliers_);
-  this->get_parameter("error_ema_alpha", error_ema_alpha_);
   this->get_parameter("trail_min_dist", trail_min_dist_);
   this->get_parameter("trail_min_yaw", trail_min_yaw_);
 
@@ -435,16 +433,7 @@ void ApproachNode::pointCloudCallback(
       }
       // else: se2_error 유지 (직전 valid 값)
     } else {
-      /*
-      EMA 저역통과 필터로 고주파 측정 노이즈 제거.
-      wz 커맨드의 떨림(차동조향에서 바퀴 속도 차이의 진동)을 억제하는 핵심.
-      alpha가 낮을수록 더 부드럽지만 지연 증가.
-      */
-      const float a = error_ema_alpha_;
-      se2_error.x = a * candidate.x + (1.0F - a) * se2_error.x;
-      se2_error.y = a * candidate.y + (1.0F - a) * se2_error.y;
-      se2_error.degree_theta =
-          a * candidate.degree_theta + (1.0F - a) * se2_error.degree_theta;
+      se2_error = candidate;
       consecutive_outliers_ = 0;
     }
   }

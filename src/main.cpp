@@ -482,8 +482,8 @@ void ApproachNode::pointCloudCallback(
 
     return;
   } else if (std::abs(se2_error.x) < tol_x && std::abs(se2_error.y) > tol_y) {
-    RCLCPP_INFO(this->get_logger(), "종방향 수정 종료. 판단 후 Failure 발행");
-    control_failure = true;
+    RCLCPP_INFO(this->get_logger(), "종방향 수정 종료. 임시로 Success 발행");
+    control_success = true;
     failure_message = "종방향 수정 종료";
     return;
   }

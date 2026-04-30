@@ -76,9 +76,9 @@ add_executable(approach_head_control_node
   ${APPROACH_HEAD_CONTROL_CPP_SOURCES}
 )
 
-add_executable(accumulation_and_icp_node
-  src/accumulation_and_icp.cpp
-)
+# add_executable(accumulation_and_icp_node
+#   src/accumulation_and_icp.cpp
+# )
 
 add_executable(align_to_person_node
   ${ALIGN_PERSON_CPP_SOURCES}
@@ -107,12 +107,12 @@ target_include_directories(approach_head_control_node
     ${OpenCV_INCLUDE_DIRS}
 )
 
-target_include_directories(accumulation_and_icp_node
-  PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-    ${PCL_INCLUDE_DIRS}
-)
+# target_include_directories(accumulation_and_icp_node
+#   PUBLIC
+#     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+#     $<INSTALL_INTERFACE:include>
+#     ${PCL_INCLUDE_DIRS}
+# )
 
 target_include_directories(align_to_person_node
   PUBLIC
@@ -132,7 +132,7 @@ target_include_directories(retreat_node
 # =========================
 target_compile_features(approach_node PUBLIC cxx_std_17)
 target_compile_features(approach_head_control_node PUBLIC cxx_std_17)
-target_compile_features(accumulation_and_icp_node PUBLIC cxx_std_17)
+# target_compile_features(accumulation_and_icp_node PUBLIC cxx_std_17)
 target_compile_features(align_to_person_node PUBLIC cxx_std_17)
 target_compile_features(retreat_node PUBLIC cxx_std_17)
 
@@ -171,21 +171,21 @@ ament_target_dependencies(approach_head_control_node
   inha_interfaces
 )
 
-ament_target_dependencies(accumulation_and_icp_node
-  rclcpp
-  rclcpp_action
-  geometry_msgs
-  sensor_msgs
-  nav_msgs
-  vision_msgs
-  visualization_msgs
-  message_filters
-  pcl_conversions
-  tf2
-  tf2_ros
-  tf2_geometry_msgs
-  inha_interfaces
-)
+# ament_target_dependencies(accumulation_and_icp_node
+#   rclcpp
+#   rclcpp_action
+#   geometry_msgs
+#   sensor_msgs
+#   nav_msgs
+#   vision_msgs
+#   visualization_msgs
+#   message_filters
+#   pcl_conversions
+#   tf2
+#   tf2_ros
+#   tf2_geometry_msgs
+#   inha_interfaces
+# )
 
 ament_target_dependencies(align_to_person_node
   rclcpp
@@ -228,10 +228,10 @@ target_link_libraries(approach_head_control_node
   ${OpenCV_LIBS}
 )
 
-target_link_libraries(accumulation_and_icp_node
-  ${PCL_LIBRARIES}
-  ${PCL_IO_LIBRARIES}
-)
+# target_link_libraries(accumulation_and_icp_node
+#   ${PCL_LIBRARIES}
+#   ${PCL_IO_LIBRARIES}
+# )
 
 target_link_libraries(align_to_person_node
   ${PCL_LIBRARIES}
@@ -253,9 +253,9 @@ if(TARGET tf2_geometry_msgs::tf2_geometry_msgs)
     tf2_geometry_msgs::tf2_geometry_msgs
   )
 
-  target_link_libraries(accumulation_and_icp_node
-    tf2_geometry_msgs::tf2_geometry_msgs
-  )
+  # target_link_libraries(accumulation_and_icp_node
+  #   tf2_geometry_msgs::tf2_geometry_msgs
+  # )
 
   target_link_libraries(align_to_person_node
     tf2_geometry_msgs::tf2_geometry_msgs
@@ -273,9 +273,9 @@ else()
     ${tf2_geometry_msgs_LIBRARIES}
   )
 
-  target_link_libraries(accumulation_and_icp_node
-    ${tf2_geometry_msgs_LIBRARIES}
-  )
+  # target_link_libraries(accumulation_and_icp_node
+  #   ${tf2_geometry_msgs_LIBRARIES}
+  # )
 
   target_link_libraries(align_to_person_node
     ${tf2_geometry_msgs_LIBRARIES}
@@ -295,10 +295,10 @@ target_compile_definitions(approach_head_control_node
     ${PCL_DEFINITIONS}
 )
 
-target_compile_definitions(accumulation_and_icp_node
-  PRIVATE
-    ${PCL_DEFINITIONS}
-)
+# target_compile_definitions(accumulation_and_icp_node
+#   PRIVATE
+#     ${PCL_DEFINITIONS}
+# )
 
 target_compile_definitions(align_to_person_node
   PRIVATE
@@ -312,7 +312,7 @@ install(
   TARGETS
     approach_node
     approach_head_control_node
-    accumulation_and_icp_node
+    # accumulation_and_icp_node
     align_to_person_node
     retreat_node
   DESTINATION lib/${PROJECT_NAME}

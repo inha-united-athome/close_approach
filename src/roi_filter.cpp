@@ -200,17 +200,26 @@ void Filter::cluster_points(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
   auto clustered_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
 
   if (!cluster_indices.empty()) {
-    const auto largest_cluster_it = std::max_element(
-        cluster_indices.begin(), cluster_indices.end(),
-        [](const pcl::PointIndices &lhs, const pcl::PointIndices &rhs) {
-          return lhs.indices.size() < rhs.indices.size();
-        });
-    const auto &largest_cluster = *largest_cluster_it;
-    for (const auto &index : largest_cluster.indices) {
+    // 로봇 전방(x축)과 가장 정렬된 클러스터 선택: centroid |y|가 최소인 것
+    auto best_it = cluster_indices.begin();
+    float best_abs_y = std::numeric_limits<float>::max();
+    for (auto it = cluster_indices.begin(); it != cluster_indices.end(); ++it) {
+      float sum_y = 0.0F;
+      for (const auto &idx : it->indices) {
+        sum_y += cloud->points[idx].y;
+      }
+      const float abs_y = std::abs(sum_y / static_cast<float>(it->indices.size()));
+      if (abs_y < best_abs_y) {
+        best_abs_y = abs_y;
+        best_it = it;
+      }
+    }
+    for (const auto &index : best_it->indices) {
       clustered_cloud->points.push_back(cloud->points[index]);
     }
-    RCLCPP_INFO(rclcpp::get_logger("Filter"), "Largest cluster has %zu points",
-                largest_cluster.indices.size());
+    RCLCPP_INFO(rclcpp::get_logger("Filter"),
+                "Selected cluster: %zu points, centroid |y|=%.3f",
+                best_it->indices.size(), best_abs_y);
   } else {
     RCLCPP_WARN(rclcpp::get_logger("Filter"),
                 "No clusters found! Check min_cluster_size (%d) and "

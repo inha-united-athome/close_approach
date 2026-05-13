@@ -1,4 +1,4 @@
-#include "close_approach/main.hpp"
+#include "approach/main.hpp"
 
 #include <filesystem>
 #include <functional>
@@ -8,12 +8,8 @@
 #include <utility>
 #include <vector>
 
-#include <cmath>
-
 #include <pcl/io/pcd_io.h>
 #include <pcl_conversions/pcl_conversions.h>
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2/utils.h>
 
 namespace {
 
@@ -93,11 +89,9 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   */
   this->declare_parameter<std::string>(
       "pointcloud_topic_name", "/camera/camera_head/depth/color/points");
-  this->declare_parameter<std::string>("lidar_topic_name", "/livox/lidar");
   this->declare_parameter<std::string>("info_topic_name",
                                        "/camera/camera_head/color/camera_info");
   this->declare_parameter<std::string>("target_frame", "base");
-  this->declare_parameter<std::string>("odom_frame", "odom");
   this->declare_parameter<float>("roi_x_min", 0.1F);
   this->declare_parameter<float>("roi_x_max", 2.0F);
   this->declare_parameter<float>("roi_y_abs_max", 0.8F);
@@ -123,21 +117,17 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->declare_parameter<float>("kd_y", 0.0F);
   this->declare_parameter<float>("kd_theta", 0.0F);
   this->declare_parameter<float>("tol_x", 0.05F);     // 5cm
-  this->declare_parameter<float>("tol_y", 0.08F);     // 8cm
+  this->declare_parameter<float>("tol_y", 0.08F);     // 2cm
   this->declare_parameter<float>("tol_theta", 0.08F); // 4~5도
   this->declare_parameter<float>("base_to_rotationcore", 0.2F);
   this->declare_parameter<float>("spike_dy_max", 0.25F);
   this->declare_parameter<float>("spike_dtheta_max", 0.25F);
   this->declare_parameter<int>("max_consecutive_outliers", 5);
-  this->declare_parameter<float>("trail_min_dist", 0.03F);
-  this->declare_parameter<float>("trail_min_yaw", 0.052F);
-  this->declare_parameter<float>("lidar_max_age_sec", 0.3F);
+  this->declare_parameter<float>("error_ema_alpha", 0.25F);
 
   this->get_parameter("pointcloud_topic_name", pointcloud_topic_name_);
-  this->get_parameter("lidar_topic_name", lidar_topic_name_);
   this->get_parameter("info_topic_name", info_topic_name_);
   this->get_parameter("target_frame", target_frame_);
-  this->get_parameter("odom_frame", odom_frame_);
   this->get_parameter("roi_x_min", roi_x_min_);
   this->get_parameter("roi_x_max", roi_x_max_);
   this->get_parameter("roi_y_abs_max", roi_y_abs_max_);
@@ -169,9 +159,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->get_parameter("spike_dy_max", spike_dy_max_);
   this->get_parameter("spike_dtheta_max", spike_dtheta_max_);
   this->get_parameter("max_consecutive_outliers", max_consecutive_outliers_);
-  this->get_parameter("trail_min_dist", trail_min_dist_);
-  this->get_parameter("trail_min_yaw", trail_min_yaw_);
-  this->get_parameter("lidar_max_age_sec", lidar_max_age_sec_);
+  this->get_parameter("error_ema_alpha", error_ema_alpha_);
 
   /*
   ROS2 Publisher && Subscriber 설정
@@ -206,20 +194,6 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
           "/approach/debugging_pointcloud", qos_best_effort_);
 
   /*
-  후진용 trail publisher (transient_local + reliable: 늦게 뜬 retreat_node도
-  최신 trail 한 번 받음). odom 프레임 기준 base 위치 시퀀스.
-  */
-  rclcpp::QoS trail_qos(rclcpp::KeepLast(1));
-  trail_qos.reliable();
-  trail_qos.transient_local();
-  trail_publisher_ =
-      this->create_publisher<nav_msgs::msg::Path>("/approach/trail", trail_qos);
-
-  trail_timer_ = this->create_wall_timer(
-      std::chrono::milliseconds(50),
-      std::bind(&ApproachNode::recordTrailPose, this));
-
-  /*
   파라미터설정
   */
   roi_filter_->setParameters(leaf_size_, mean_k_, stddev_mul_thresh_,
@@ -235,9 +209,9 @@ Ros2 Action 관련 함수들
 rclcpp_action::GoalResponse
 ApproachNode::handle_goal(const rclcpp_action::GoalUUID &uuid,
                           std::shared_ptr<const ApproachAction::Goal> goal) {
-  (void)uuid;
-  (void)goal;
   RCLCPP_INFO(this->get_logger(), "Received approach goal");
+  main_target = goal->main_target;
+
   return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
 
@@ -356,35 +330,12 @@ void ApproachNode::pointCloudCallback(
   const double t_ground = elapsed_ms(t2);
 
   /*
-  LiDAR 융합: lidarCallback이 base 프레임으로 변환·전처리해서 캐싱해둔 클라우드를
-  여기서 합친다. 카메라 FOV 밖에서도 LiDAR가 객체 윤곽을 잡아주는 보강.
-  PTP로 stamp 동기 되어있다는 가정 하에 stamp 기준 staleness 체크 (릴레이 끊김
-  방지). 너무 오래된 캐시는 skip.
+  디텍터가 아닌 base 프레임 기준 공간적 ROI로 전방의 타겟 영역만 남긴다.
   */
-  {
-    std::lock_guard<std::mutex> lock(lidar_cloud_mutex_);
-    if (latest_lidar_cloud_ && !latest_lidar_cloud_->empty()) {
-      const double age =
-          (this->now() - latest_lidar_stamp_).seconds();
-      if (age < static_cast<double>(lidar_max_age_sec_)) {
-        *cloud += *latest_lidar_cloud_;
-      } else {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                             "Stale lidar cloud (%.2fs > %.2fs), skip concat",
-                             age, lidar_max_age_sec_);
-      }
-    }
-  }
-
-  /*
-  카메라는 ROI 미적용: FOV 자체가 좁아 자연스럽게 전방만 보고, 가까이 접근했을
-  때 roi_x_min 에 의해 객체가 통째로 잘려나가 충돌하는 문제를 피한다.
-  LiDAR cloud 는 lidarCallback 에서 이미 applySpatialRoi 통과한 상태로 합쳐져
-  있으므로 로봇 본체 자기반사 / 360° 잡음은 그쪽에서 걸러진다.
-  */
+  applySpatialRoi(cloud);
   if (cloud->empty()) {
     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                         "No points left after ground removal & concat.");
+                         "No points left after spatial ROI.");
     return;
   }
 
@@ -460,7 +411,16 @@ void ApproachNode::pointCloudCallback(
       }
       // else: se2_error 유지 (직전 valid 값)
     } else {
-      se2_error = candidate;
+      /*
+      EMA 저역통과 필터로 고주파 측정 노이즈 제거.
+      wz 커맨드의 떨림(차동조향에서 바퀴 속도 차이의 진동)을 억제하는 핵심.
+      alpha가 낮을수록 더 부드럽지만 지연 증가.
+      */
+      const float a = error_ema_alpha_;
+      se2_error.x = a * candidate.x + (1.0F - a) * se2_error.x;
+      se2_error.y = a * candidate.y + (1.0F - a) * se2_error.y;
+      se2_error.degree_theta =
+          a * candidate.degree_theta + (1.0F - a) * se2_error.degree_theta;
       consecutive_outliers_ = 0;
     }
   }
@@ -509,8 +469,8 @@ void ApproachNode::pointCloudCallback(
 
     return;
   } else if (std::abs(se2_error.x) < tol_x && std::abs(se2_error.y) > tol_y) {
-    RCLCPP_INFO(this->get_logger(), "종방향 수정 종료. 임시로 Success 발행");
-    control_success = true;
+    RCLCPP_INFO(this->get_logger(), "종방향 수정 종료. 판단 후 Failure 발행");
+    control_failure = true;
     failure_message = "종방향 수정 종료";
     return;
   }
@@ -531,49 +491,6 @@ void ApproachNode::pointCloudCallback(
         dt * 1000.0, se2_error.x, se2_error.y, se2_error.degree_theta,
         cmd_vel.linear.x, cmd_vel.angular.z);
   }
-}
-
-void ApproachNode::lidarCallback(
-    const PointCloudMsg::ConstSharedPtr &lidar_msg) {
-  if (!algorithm_start_flag) {
-    return;
-  }
-
-  pcl::PointCloud<pcl::PointXYZ>::Ptr lidar_cloud(
-      new pcl::PointCloud<pcl::PointXYZ>);
-  pcl::fromROSMsg(*lidar_msg, *lidar_cloud);
-  if (lidar_cloud->empty()) {
-    return;
-  }
-
-  // 카메라와 동일한 전처리 단계 통과 (downsample → outlier → ground removal)
-  roi_filter_->voxel_downsampling(lidar_cloud);
-  roi_filter_->remove_outliers(lidar_cloud);
-
-  // base→lidar 는 본래 동적(torso 움직임)이지만, 이 approach 노드가 도는 동안
-  // 은 torso 고정이라 사실상 static. TimePointZero(=latest)로 lookup 해서 stamp
-  // 기준 lookup 의 릴레이 지연 실패를 회피.
-  geometry_msgs::msg::TransformStamped tf;
-  try {
-    tf = tf_buffer_.lookupTransform(target_frame_, lidar_msg->header.frame_id,
-                                    tf2::TimePointZero,
-                                    tf2::durationFromSec(0.2));
-  } catch (const tf2::TransformException &ex) {
-    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                         "lidar TF lookup failed: %s", ex.what());
-    return;
-  }
-  roi_filter_->remove_ground(lidar_cloud, tf.transform);
-
-  // 공간 ROI는 LiDAR에만 적용. LiDAR는 360°/넓은 영역을 보고 로봇 본체 자기반사도
-  // 잡히므로 전방 박스로 잘라낸다. 카메라는 FOV 자체가 좁고, 가까이 갔을 때
-  // roi_x_min 에 의해 객체가 통째로 잘려나가는 문제 때문에 ROI 미적용.
-  applySpatialRoi(lidar_cloud);
-
-  // base 프레임 + ground 제거 + ROI 적용된 상태로 캐싱. 카메라 콜백에서 concat.
-  std::lock_guard<std::mutex> lock(lidar_cloud_mutex_);
-  latest_lidar_cloud_ = lidar_cloud;
-  latest_lidar_stamp_ = lidar_msg->header.stamp;
 }
 
 void ApproachNode::cameraInfoCallback(const CameraInfoMsg::SharedPtr msg) {
@@ -738,17 +655,7 @@ void ApproachNode::saveDebugCloud(
 }
 
 void ApproachNode::stopAlgorithm() {
-  // trail은 이번 approach가 끝난 시점에 latched로 한 번 발행해서
-  // RetreatNode가 후진 액션 시 사용할 수 있도록 한다.
-  publishTrail();
-
   point_cloud_subscriber_.reset();
-  lidar_subscriber_.reset();
-
-  {
-    std::lock_guard<std::mutex> lock(lidar_cloud_mutex_);
-    latest_lidar_cloud_.reset();
-  }
 
   start_time_flag = false;
   control_success = false;
@@ -757,85 +664,16 @@ void ApproachNode::stopAlgorithm() {
 }
 
 void ApproachNode::startAlgorithm() {
-  {
-    std::lock_guard<std::mutex> lock(trail_mutex_);
-    trail_.clear();
-  }
-  {
-    std::lock_guard<std::mutex> lock(lidar_cloud_mutex_);
-    latest_lidar_cloud_.reset();
-  }
-
   point_cloud_subscriber_ = this->create_subscription<PointCloudMsg>(
       pointcloud_topic_name_, qos_best_effort_,
       std::bind(&ApproachNode::pointCloudCallback, this,
                 std::placeholders::_1));
-
-  lidar_subscriber_ = this->create_subscription<PointCloudMsg>(
-      lidar_topic_name_, qos_best_effort_,
-      std::bind(&ApproachNode::lidarCallback, this, std::placeholders::_1));
 
   start_time_flag = false;
   control_success = false;
   control_failure = false;
 
   algorithm_start_flag = true;
-}
-
-void ApproachNode::recordTrailPose() {
-  if (!algorithm_start_flag) {
-    return;
-  }
-
-  geometry_msgs::msg::TransformStamped tf;
-  try {
-    tf = tf_buffer_.lookupTransform(odom_frame_, target_frame_,
-                                    tf2::TimePointZero,
-                                    tf2::durationFromSec(0.05));
-  } catch (const tf2::TransformException &ex) {
-    RCLCPP_DEBUG(this->get_logger(), "trail TF lookup failed: %s", ex.what());
-    return;
-  }
-
-  geometry_msgs::msg::PoseStamped pose;
-  pose.header = tf.header;
-  pose.pose.position.x = tf.transform.translation.x;
-  pose.pose.position.y = tf.transform.translation.y;
-  pose.pose.position.z = tf.transform.translation.z;
-  pose.pose.orientation = tf.transform.rotation;
-
-  std::lock_guard<std::mutex> lock(trail_mutex_);
-  if (trail_.empty()) {
-    trail_.push_back(pose);
-    return;
-  }
-  const auto &last = trail_.back().pose;
-  const float dx = static_cast<float>(pose.pose.position.x - last.position.x);
-  const float dy = static_cast<float>(pose.pose.position.y - last.position.y);
-  const float dist = std::sqrt(dx * dx + dy * dy);
-  const double yaw_now = tf2::getYaw(pose.pose.orientation);
-  const double yaw_last = tf2::getYaw(last.orientation);
-  double dyaw = yaw_now - yaw_last;
-  while (dyaw > M_PI) dyaw -= 2.0 * M_PI;
-  while (dyaw < -M_PI) dyaw += 2.0 * M_PI;
-
-  if (dist >= trail_min_dist_ ||
-      std::abs(dyaw) >= static_cast<double>(trail_min_yaw_)) {
-    trail_.push_back(pose);
-  }
-}
-
-void ApproachNode::publishTrail() {
-  nav_msgs::msg::Path path;
-  {
-    std::lock_guard<std::mutex> lock(trail_mutex_);
-    path.poses.assign(trail_.begin(), trail_.end());
-  }
-  path.header.stamp = this->now();
-  path.header.frame_id = odom_frame_;
-  trail_publisher_->publish(path);
-  RCLCPP_INFO(this->get_logger(), "Published approach trail: %zu poses",
-              path.poses.size());
 }
 
 void ApproachNode::applySpatialRoi(

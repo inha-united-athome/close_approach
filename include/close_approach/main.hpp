@@ -66,6 +66,7 @@ private:
   void startAlgorithm();
 
   rclcpp::Subscription<PointCloudMsg>::SharedPtr point_cloud_subscriber_;
+  rclcpp::Subscription<PointCloudMsg>::SharedPtr lidar_subscriber_;
   rclcpp::Subscription<CameraInfoMsg>::SharedPtr camera_info_subscriber_;
 
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_publisher_;
@@ -83,6 +84,7 @@ private:
   rclcpp::QoS qos_reliable_;
 
   std::string pointcloud_topic_name_;
+  std::string lidar_topic_name_;
   std::string info_topic_name_;
   std::string target_frame_;
   std::string odom_frame_;
@@ -142,6 +144,13 @@ private:
   float spike_dtheta_max_ = 0.25F;  // 한 사이클당 허용 theta 변화 (rad)
   int max_consecutive_outliers_ = 5; // 연속으로 이만큼 튀면 받아들임(씬 변경)
 
+  // LiDAR 융합: 최신 LiDAR 클라우드를 base 프레임으로 변환·전처리해 캐싱.
+  // 카메라 콜백에서 ground 제거 후 concat 한다.
+  pcl::PointCloud<pcl::PointXYZ>::Ptr latest_lidar_cloud_;
+  rclcpp::Time latest_lidar_stamp_;
+  std::mutex lidar_cloud_mutex_;
+  float lidar_max_age_sec_ = 0.3F;  // 릴레이 끊김 안전장치 (PTP 동기 가정)
+
   // 후진용 trail 기록 (odom 프레임 기준 base 위치 시퀀스)
   std::deque<geometry_msgs::msg::PoseStamped> trail_;
   std::mutex trail_mutex_;
@@ -154,6 +163,7 @@ private:
   tf2_ros::TransformListener tf_listener_;
 
   void pointCloudCallback(const PointCloudMsg::ConstSharedPtr &pointcloud_msg);
+  void lidarCallback(const PointCloudMsg::ConstSharedPtr &lidar_msg);
   void cameraInfoCallback(const CameraInfoMsg::SharedPtr msg);
   void applySpatialRoi(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud);
   bool getTransform(const std::string &target_frame,

@@ -93,6 +93,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   */
   this->declare_parameter<std::string>(
       "pointcloud_topic_name", "/camera/camera_head/depth/color/points");
+  this->declare_parameter<std::string>("lidar_topic_name", "/livox/lidar");
   this->declare_parameter<std::string>("info_topic_name",
                                        "/camera/camera_head/color/camera_info");
   this->declare_parameter<std::string>("target_frame", "base");
@@ -130,8 +131,10 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->declare_parameter<int>("max_consecutive_outliers", 5);
   this->declare_parameter<float>("trail_min_dist", 0.03F);
   this->declare_parameter<float>("trail_min_yaw", 0.052F);
+  this->declare_parameter<float>("lidar_max_age_sec", 0.3F);
 
   this->get_parameter("pointcloud_topic_name", pointcloud_topic_name_);
+  this->get_parameter("lidar_topic_name", lidar_topic_name_);
   this->get_parameter("info_topic_name", info_topic_name_);
   this->get_parameter("target_frame", target_frame_);
   this->get_parameter("odom_frame", odom_frame_);
@@ -168,6 +171,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->get_parameter("max_consecutive_outliers", max_consecutive_outliers_);
   this->get_parameter("trail_min_dist", trail_min_dist_);
   this->get_parameter("trail_min_yaw", trail_min_yaw_);
+  this->get_parameter("lidar_max_age_sec", lidar_max_age_sec_);
 
   /*
   ROS2 Publisher && Subscriber 설정
@@ -352,6 +356,27 @@ void ApproachNode::pointCloudCallback(
   const double t_ground = elapsed_ms(t2);
 
   /*
+  LiDAR 융합: lidarCallback이 base 프레임으로 변환·전처리해서 캐싱해둔 클라우드를
+  여기서 합친다. 카메라 FOV 밖에서도 LiDAR가 객체 윤곽을 잡아주는 보강.
+  PTP로 stamp 동기 되어있다는 가정 하에 stamp 기준 staleness 체크 (릴레이 끊김
+  방지). 너무 오래된 캐시는 skip.
+  */
+  {
+    std::lock_guard<std::mutex> lock(lidar_cloud_mutex_);
+    if (latest_lidar_cloud_ && !latest_lidar_cloud_->empty()) {
+      const double age =
+          (this->now() - latest_lidar_stamp_).seconds();
+      if (age < static_cast<double>(lidar_max_age_sec_)) {
+        *cloud += *latest_lidar_cloud_;
+      } else {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "Stale lidar cloud (%.2fs > %.2fs), skip concat",
+                             age, lidar_max_age_sec_);
+      }
+    }
+  }
+
+  /*
   디텍터가 아닌 base 프레임 기준 공간적 ROI로 전방의 타겟 영역만 남긴다.
   */
   applySpatialRoi(cloud);
@@ -504,6 +529,44 @@ void ApproachNode::pointCloudCallback(
         dt * 1000.0, se2_error.x, se2_error.y, se2_error.degree_theta,
         cmd_vel.linear.x, cmd_vel.angular.z);
   }
+}
+
+void ApproachNode::lidarCallback(
+    const PointCloudMsg::ConstSharedPtr &lidar_msg) {
+  if (!algorithm_start_flag) {
+    return;
+  }
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr lidar_cloud(
+      new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::fromROSMsg(*lidar_msg, *lidar_cloud);
+  if (lidar_cloud->empty()) {
+    return;
+  }
+
+  // 카메라와 동일한 전처리 단계 통과 (downsample → outlier → ground removal)
+  roi_filter_->voxel_downsampling(lidar_cloud);
+  roi_filter_->remove_outliers(lidar_cloud);
+
+  // base→lidar 는 본래 동적(torso 움직임)이지만, 이 approach 노드가 도는 동안
+  // 은 torso 고정이라 사실상 static. TimePointZero(=latest)로 lookup 해서 stamp
+  // 기준 lookup 의 릴레이 지연 실패를 회피.
+  geometry_msgs::msg::TransformStamped tf;
+  try {
+    tf = tf_buffer_.lookupTransform(target_frame_, lidar_msg->header.frame_id,
+                                    tf2::TimePointZero,
+                                    tf2::durationFromSec(0.2));
+  } catch (const tf2::TransformException &ex) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                         "lidar TF lookup failed: %s", ex.what());
+    return;
+  }
+  roi_filter_->remove_ground(lidar_cloud, tf.transform);
+
+  // base 프레임 + ground 제거된 상태로 캐싱. 카메라 콜백에서 concat.
+  std::lock_guard<std::mutex> lock(lidar_cloud_mutex_);
+  latest_lidar_cloud_ = lidar_cloud;
+  latest_lidar_stamp_ = lidar_msg->header.stamp;
 }
 
 void ApproachNode::cameraInfoCallback(const CameraInfoMsg::SharedPtr msg) {
@@ -673,6 +736,12 @@ void ApproachNode::stopAlgorithm() {
   publishTrail();
 
   point_cloud_subscriber_.reset();
+  lidar_subscriber_.reset();
+
+  {
+    std::lock_guard<std::mutex> lock(lidar_cloud_mutex_);
+    latest_lidar_cloud_.reset();
+  }
 
   start_time_flag = false;
   control_success = false;
@@ -685,11 +754,19 @@ void ApproachNode::startAlgorithm() {
     std::lock_guard<std::mutex> lock(trail_mutex_);
     trail_.clear();
   }
+  {
+    std::lock_guard<std::mutex> lock(lidar_cloud_mutex_);
+    latest_lidar_cloud_.reset();
+  }
 
   point_cloud_subscriber_ = this->create_subscription<PointCloudMsg>(
       pointcloud_topic_name_, qos_best_effort_,
       std::bind(&ApproachNode::pointCloudCallback, this,
                 std::placeholders::_1));
+
+  lidar_subscriber_ = this->create_subscription<PointCloudMsg>(
+      lidar_topic_name_, qos_best_effort_,
+      std::bind(&ApproachNode::lidarCallback, this, std::placeholders::_1));
 
   start_time_flag = false;
   control_success = false;

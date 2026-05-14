@@ -117,6 +117,7 @@ private:
   float tol_y_ = 0.02F;
   float tol_theta_ = 0.08F;
   float base_to_rotationcore_ = 0.2F;
+  float target_standoff_distance_ = 0.35F;
   bool debug_enabled_ = false;
   bool measure_enabled_ = false;
   std::filesystem::path debug_output_dir_;

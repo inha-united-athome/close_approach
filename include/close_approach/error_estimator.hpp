@@ -13,5 +13,6 @@ class ErrorEstimator {
 public:
   ErrorEstimator() = default;
 
-  SE2Error estimate_error(const TargetEdge &target_edge);
+  SE2Error estimate_error(const TargetEdge &target_edge,
+                          float target_standoff_distance);
 };

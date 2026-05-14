@@ -1,11 +1,14 @@
 #include "close_approach/error_estimator.hpp"
 #include <rclcpp/rclcpp.hpp>
 
-SE2Error ErrorEstimator::estimate_error(const TargetEdge &target_edge) {
+SE2Error ErrorEstimator::estimate_error(const TargetEdge &target_edge,
+                                        float target_standoff_distance) {
   /*
-  진짜 목표점 = target_center - 0.4 * normal_axis
+  진짜 목표점 = target_center - target_standoff_distance * normal_axis
   */
-  float x_error = target_edge.target_center.dot(target_edge.normal_axis) - 0.35;
+  float x_error =
+      target_edge.target_center.dot(target_edge.normal_axis) -
+      target_standoff_distance;
   // PCA의 엣지 벡터 부호가 좌우로 깜빡이는 현상(Flipping) 방지
   // 가장 안정적인 수직축(normal_axis)을 기준으로 무조건 왼쪽 90도 회전시킨 고정
   // 가짜 축을 하나 만듭니다.

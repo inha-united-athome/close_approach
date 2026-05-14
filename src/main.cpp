@@ -105,7 +105,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->declare_parameter<float>("leaf_size", 0.03F);
   this->declare_parameter<int>("mean_k", 50);
   this->declare_parameter<float>("stddev_mul_thresh", 0.5F);
-  this->declare_parameter<float>("ground_height", 0.02F);
+  this->declare_parameter<float>("ground_height", 0.1F);
   this->declare_parameter<float>("cluster_tolerance", 0.05F);
   this->declare_parameter<int>("min_cluster_size", 100);
   this->declare_parameter<int>("max_cluster_size", 10000);
@@ -126,6 +126,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->declare_parameter<float>("tol_y", 0.08F);     // 8cm
   this->declare_parameter<float>("tol_theta", 0.08F); // 4~5도
   this->declare_parameter<float>("base_to_rotationcore", 0.2F);
+  this->declare_parameter<float>("target_standoff_distance", 0.5F); // 로봇과 목표 사이의 간격
   this->declare_parameter<float>("spike_dy_max", 0.25F);
   this->declare_parameter<float>("spike_dtheta_max", 0.25F);
   this->declare_parameter<int>("max_consecutive_outliers", 5);
@@ -166,6 +167,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->get_parameter("tol_y", tol_y_);
   this->get_parameter("tol_theta", tol_theta_);
   this->get_parameter("base_to_rotationcore", base_to_rotationcore_);
+  this->get_parameter("target_standoff_distance", target_standoff_distance_);
   this->get_parameter("spike_dy_max", spike_dy_max_);
   this->get_parameter("spike_dtheta_max", spike_dtheta_max_);
   this->get_parameter("max_consecutive_outliers", max_consecutive_outliers_);
@@ -425,10 +427,12 @@ void ApproachNode::pointCloudCallback(
   */
   TargetEdge target_edge = edge_extractor_->extract_edges(
       obb.center, obb.axis1, obb.axis2, obb.length1, obb.length2);
+  this->get_parameter("target_standoff_distance", target_standoff_distance_);
   publishTargetEdge(target_edge);
 
   // error estimator => SE(2) error 측정
-  SE2Error candidate = error_estimator_->estimate_error(target_edge);
+  SE2Error candidate =
+      error_estimator_->estimate_error(target_edge, target_standoff_distance_);
 
   /*
   스파이크 필터: 클러스터 오탐/OBB flipping으로 인한 단일 프레임 이상치를 제거.
@@ -704,7 +708,8 @@ void ApproachNode::publishTargetEdge(const TargetEdge &target_edge) {
   pt.y = p2.y();
   marker.points.push_back(pt);
   Eigen::Vector2f p3_normal_end =
-      target_edge.target_center - target_edge.normal_axis * 0.4f;
+      target_edge.target_center -
+      target_edge.normal_axis * target_standoff_distance_;
   pt.x = target_edge.target_center.x();
   pt.y = target_edge.target_center.y();
   marker.points.push_back(pt);

@@ -174,7 +174,9 @@ void Filter::remove_ground(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
 }
 
 void Filter::cluster_points(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
-                            pcl::search::KdTree<pcl::PointXYZ>::Ptr &kdtree) {
+                            pcl::search::KdTree<pcl::PointXYZ>::Ptr &kdtree,
+                            float min_cluster_area,
+                            const Eigen::Vector2f *anchor_xy) {
   if (cloud->empty()) {
     RCLCPP_WARN(rclcpp::get_logger("Filter"),
                 "Input cloud for clustering is empty!");
@@ -199,33 +201,85 @@ void Filter::cluster_points(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
 
   auto clustered_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
 
-  if (!cluster_indices.empty()) {
-    // 로봇 전방(x축)과 가장 정렬된 클러스터 선택: centroid |y|가 최소인 것
-    auto best_it = cluster_indices.begin();
-    float best_abs_y = std::numeric_limits<float>::max();
-    for (auto it = cluster_indices.begin(); it != cluster_indices.end(); ++it) {
-      float sum_y = 0.0F;
-      for (const auto &idx : it->indices) {
-        sum_y += cloud->points[idx].y;
-      }
-      const float abs_y = std::abs(sum_y / static_cast<float>(it->indices.size()));
-      if (abs_y < best_abs_y) {
-        best_abs_y = abs_y;
-        best_it = it;
-      }
-    }
-    for (const auto &index : best_it->indices) {
-      clustered_cloud->points.push_back(cloud->points[index]);
-    }
-    RCLCPP_INFO(rclcpp::get_logger("Filter"),
-                "Selected cluster: %zu points, centroid |y|=%.3f",
-                best_it->indices.size(), best_abs_y);
-  } else {
+  if (cluster_indices.empty()) {
     RCLCPP_WARN(rclcpp::get_logger("Filter"),
                 "No clusters found! Check min_cluster_size (%d) and "
                 "cluster_tolerance (%.3f)",
                 min_cluster_size_, cluster_tolerance_);
+    cloud = clustered_cloud;
+    return;
   }
+
+  /*
+  각 클러스터의 centroid 와 2D AABB footprint area 계산.
+  footprint_area >= min_cluster_area 인 후보만 남기고, 그 중 reference 점
+  (anchor_xy if available, 없으면 로봇 원점)에 centroid 가 가장 가까운 것 선택.
+  → 가까이서 시작한 작은 박스/사람도 잡고, 뒷벽 swap 방지.
+  */
+  struct Cand {
+    std::size_t idx;
+    Eigen::Vector2f centroid;
+    float area;
+  };
+  std::vector<Cand> cands;
+  cands.reserve(cluster_indices.size());
+
+  float max_seen_area = 0.0F;
+  for (std::size_t i = 0; i < cluster_indices.size(); ++i) {
+    const auto &ci = cluster_indices[i];
+    float sum_x = 0.0F, sum_y = 0.0F;
+    float xmin = std::numeric_limits<float>::max();
+    float xmax = -std::numeric_limits<float>::max();
+    float ymin = std::numeric_limits<float>::max();
+    float ymax = -std::numeric_limits<float>::max();
+    for (const auto &id : ci.indices) {
+      const auto &pt = cloud->points[id];
+      sum_x += pt.x;
+      sum_y += pt.y;
+      xmin = std::min(xmin, pt.x);
+      xmax = std::max(xmax, pt.x);
+      ymin = std::min(ymin, pt.y);
+      ymax = std::max(ymax, pt.y);
+    }
+    const float n = static_cast<float>(ci.indices.size());
+    Cand c;
+    c.idx = i;
+    c.centroid = Eigen::Vector2f(sum_x / n, sum_y / n);
+    c.area = (xmax - xmin) * (ymax - ymin);
+    max_seen_area = std::max(max_seen_area, c.area);
+    cands.push_back(c);
+  }
+
+  const Eigen::Vector2f ref =
+      anchor_xy ? *anchor_xy : Eigen::Vector2f(0.0F, 0.0F);
+
+  const Cand *best = nullptr;
+  float best_d2 = std::numeric_limits<float>::max();
+  for (const auto &c : cands) {
+    if (c.area < min_cluster_area) continue;
+    const float d2 = (c.centroid - ref).squaredNorm();
+    if (d2 < best_d2) {
+      best_d2 = d2;
+      best = &c;
+    }
+  }
+
+  if (!best) {
+    RCLCPP_WARN(rclcpp::get_logger("Filter"),
+                "No cluster meets min_area=%.3f (max seen=%.3f, n=%zu)",
+                min_cluster_area, max_seen_area, cands.size());
+    cloud = clustered_cloud;
+    return;
+  }
+
+  const auto &chosen = cluster_indices[best->idx];
+  for (const auto &id : chosen.indices) {
+    clustered_cloud->points.push_back(cloud->points[id]);
+  }
+  RCLCPP_INFO(rclcpp::get_logger("Filter"),
+              "Selected cluster: pts=%zu area=%.3f dist=%.3f%s",
+              chosen.indices.size(), best->area, std::sqrt(best_d2),
+              anchor_xy ? " (vs anchor)" : " (vs origin)");
 
   cloud = clustered_cloud;
 }

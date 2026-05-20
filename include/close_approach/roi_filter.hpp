@@ -16,6 +16,8 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
+#include <Eigen/Dense>
+
 class Filter {
 public:
   Filter();
@@ -36,8 +38,15 @@ public:
   void remove_outliers(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud);
   void remove_ground(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
                      const geometry_msgs::msg::Transform &tf);
+  /*
+  Footprint (2D AABB xy) 면적이 min_cluster_area 이상인 클러스터들 중,
+  reference point(anchor_xy or 로봇 원점)에 centroid가 가장 가까운 것을 선택.
+  anchor_xy == nullptr 이면 base 원점(0,0) 기준.
+  */
   void cluster_points(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
-                      pcl::search::KdTree<pcl::PointXYZ>::Ptr &kdtree);
+                      pcl::search::KdTree<pcl::PointXYZ>::Ptr &kdtree,
+                      float min_cluster_area,
+                      const Eigen::Vector2f *anchor_xy);
 
   void projection_filter(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud);
 

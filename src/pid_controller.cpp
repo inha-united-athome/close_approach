@@ -17,8 +17,19 @@ void PIDController::setParameters(float kp_x, float kp_y, float kp_theta,
   this->base_to_rotationcore = base_to_rotationcore;
 }
 
+void PIDController::setLimits(float max_v, float max_w) {
+  this->max_v_ = max_v;
+  this->max_w_ = max_w;
+}
+
+void PIDController::reset() {
+  se2_error_prev = {0.0f, 0.0f, 0.0f};
+  se2_error_sum = {0.0f, 0.0f, 0.0f};
+}
+
 geometry_msgs::msg::Twist
-PIDController::compute_control(const SE2Error &se2_error, float dt) {
+PIDController::compute_control(const SE2Error &se2_error, float dt,
+                               float v_scale) {
   geometry_msgs::msg::Twist cmd_vel;
   if (dt <= 0.0f)
     return cmd_vel; // 방어 코드
@@ -55,14 +66,23 @@ PIDController::compute_control(const SE2Error &se2_error, float dt) {
   // 함
   float w_z = control_theta + control_y;
 
-  // Limits
-  float max_v = 0.05f; // 로봇의 최대 직진 속도 (m/s)
-  float max_w = 0.2f;  // 로봇의 최대 회전 속도 (rad/s)
+  // Limits — v_scale 로 감속 ramp 적용 (정지 직전 부드럽게 0으로 수렴)
+  const float v_scale_clamped = std::clamp(v_scale, 0.0f, 1.0f);
+  const float v_cap = max_v_ * v_scale_clamped;
   // v_x 포화가 w_z 조향 능력을 깎지 않도록 각 축을 독립적으로 제한한다.
-  v_x = std::clamp(v_x, -max_v, max_v);
-  w_z = std::clamp(w_z, -max_w, max_w);
+  v_x = std::clamp(v_x, -v_cap, v_cap);
+  w_z = std::clamp(w_z, -max_w_, max_w_);
   cmd_vel.linear.x = v_x;
   cmd_vel.angular.z = w_z;
 
+  return cmd_vel;
+}
+
+geometry_msgs::msg::Twist
+PIDController::compute_align_only(float theta_err) const {
+  geometry_msgs::msg::Twist cmd_vel;
+  cmd_vel.linear.x = 0.0;
+  float w_z = std::clamp(kp_theta * theta_err, -max_w_, max_w_);
+  cmd_vel.angular.z = w_z;
   return cmd_vel;
 }

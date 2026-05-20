@@ -109,6 +109,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->declare_parameter<float>("cluster_tolerance", 0.05F);
   this->declare_parameter<int>("min_cluster_size", 100);
   this->declare_parameter<int>("max_cluster_size", 10000);
+  this->declare_parameter<float>("min_cluster_area", 0.09F);
   this->declare_parameter<float>("fx", 605.7842407226562F);
   this->declare_parameter<float>("fy", 604.492919921875F);
   this->declare_parameter<float>("cx", 323.7266845703125F);
@@ -122,11 +123,18 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->declare_parameter<float>("kd_x", 0.0F);
   this->declare_parameter<float>("kd_y", 0.0F);
   this->declare_parameter<float>("kd_theta", 0.0F);
-  this->declare_parameter<float>("tol_x", 0.05F);     // 5cm
+  this->declare_parameter<float>("tol_x", 0.03F);     // 3cm
   this->declare_parameter<float>("tol_y", 0.08F);     // 8cm
   this->declare_parameter<float>("tol_theta", 0.08F); // 4~5도
   this->declare_parameter<float>("base_to_rotationcore", 0.2F);
   this->declare_parameter<float>("target_standoff_distance", 0.5F); // 로봇과 목표 사이의 간격
+  this->declare_parameter<float>("max_v", 0.10F);
+  this->declare_parameter<float>("max_w", 0.2F);
+  this->declare_parameter<float>("decel_dist_max", 0.20F);
+  this->declare_parameter<float>("decel_dist_min", 0.05F);
+  this->declare_parameter<float>("decel_ratio", 0.5F);
+  this->declare_parameter<float>("align_timeout_sec", 5.0F);
+  this->declare_parameter<float>("dwell_duration_sec", 2.0F);
   this->declare_parameter<float>("spike_dy_max", 0.25F);
   this->declare_parameter<float>("spike_dtheta_max", 0.25F);
   this->declare_parameter<int>("max_consecutive_outliers", 5);
@@ -150,6 +158,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->get_parameter("cluster_tolerance", cluster_tolerance_);
   this->get_parameter("min_cluster_size", min_cluster_size_);
   this->get_parameter("max_cluster_size", max_cluster_size_);
+  this->get_parameter("min_cluster_area", min_cluster_area_);
   this->get_parameter("fx", fx_);
   this->get_parameter("fy", fy_);
   this->get_parameter("cx", cx_);
@@ -168,6 +177,13 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->get_parameter("tol_theta", tol_theta_);
   this->get_parameter("base_to_rotationcore", base_to_rotationcore_);
   this->get_parameter("target_standoff_distance", target_standoff_distance_);
+  this->get_parameter("max_v", max_v_);
+  this->get_parameter("max_w", max_w_);
+  this->get_parameter("decel_dist_max", decel_dist_max_);
+  this->get_parameter("decel_dist_min", decel_dist_min_);
+  this->get_parameter("decel_ratio", decel_ratio_);
+  this->get_parameter("align_timeout_sec", align_timeout_sec_);
+  this->get_parameter("dwell_duration_sec", dwell_duration_sec_);
   this->get_parameter("spike_dy_max", spike_dy_max_);
   this->get_parameter("spike_dtheta_max", spike_dtheta_max_);
   this->get_parameter("max_consecutive_outliers", max_consecutive_outliers_);
@@ -230,6 +246,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   pid_controller_->setParameters(kp_x_, kp_y_, kp_theta_, ki_x_, ki_y_,
                                  ki_theta_, kd_x_, kd_y_, kd_theta_,
                                  base_to_rotationcore_);
+  pid_controller_->setLimits(max_v_, max_w_);
 }
 /*
 Ros2 Action 관련 함수들
@@ -404,7 +421,15 @@ void ApproachNode::pointCloudCallback(
   */
   const auto t3 = Clock::now();
   kdtree->setInputCloud(cloud);
-  roi_filter_->cluster_points(cloud, kdtree);
+  // anchor 가 잡혀있으면 그 위치 기준으로 가까운 클러스터 선택, 아니면 로봇 원점.
+  // 첫 프레임 한정 anchor 없음 → 가장 가까운 클러스터.
+  Eigen::Vector2f anchor_base_for_cluster;
+  const Eigen::Vector2f *anchor_ptr = nullptr;
+  if (aim_anchor_captured_ &&
+      anchorInBase(pointcloud_msg->header.stamp, anchor_base_for_cluster)) {
+    anchor_ptr = &anchor_base_for_cluster;
+  }
+  roi_filter_->cluster_points(cloud, kdtree, min_cluster_area_, anchor_ptr);
   const double t_cluster = elapsed_ms(t3);
   saveDebugCloud(cloud, "clustered");
 
@@ -428,6 +453,23 @@ void ApproachNode::pointCloudCallback(
   TargetEdge target_edge = edge_extractor_->extract_edges(
       obb.center, obb.axis1, obb.axis2, obb.length1, obb.length2);
   this->get_parameter("target_standoff_distance", target_standoff_distance_);
+
+  /*
+  Aim anchor: 첫 유효 프레임에서 로봇 정면 ray ∩ target edge 직선 교차점을
+  odom 프레임에 박아두고, 이후 매 프레임 현재 OBB edge 직선에 수직 투영해서
+  target_center 로 사용한다. → 시작 시 본 지점을 향해 계속 접근.
+  */
+  if (!aim_anchor_captured_ && target_edge.target_length > 0.1F) {
+    captureAimAnchor(target_edge, pointcloud_msg->header.stamp);
+  }
+  if (aim_anchor_captured_) {
+    Eigen::Vector2f projected;
+    if (projectAnchorOnEdge(target_edge, pointcloud_msg->header.stamp,
+                            projected)) {
+      target_edge.target_center = projected;
+    }
+  }
+
   publishTargetEdge(target_edge);
 
   // error estimator => SE(2) error 측정
@@ -489,38 +531,87 @@ void ApproachNode::pointCloudCallback(
   float dt = (current_time - previous_time_).seconds();
   previous_time_ = current_time;
 
-  // 허용 오차
-  float tol_x = tol_x_;
-  float tol_y = tol_y_;
-  float tol_theta = tol_theta_;
-  // 세 가지 오차가 모두 허용 범위 안에 들어왔다면 "도착"으로 판정!
-  if (std::abs(se2_error.x) < tol_x && std::abs(se2_error.y) < tol_y &&
-      std::abs(se2_error.degree_theta) < tol_theta) {
-
-    RCLCPP_INFO(this->get_logger(), "목표 지점에 도착 완료!");
-    if (start_time_flag == false) {
-      start_time = current_time;
-      start_time_flag = true;
-    }
-    if ((current_time - start_time).seconds() > 2.0) {
-      control_success = true;
-    }
-
-    geometry_msgs::msg::Twist stop_msg;
-    stop_msg.linear.x = 0.0;
-    stop_msg.angular.z = 0.0;
-    cmd_vel_publisher_->publish(stop_msg);
-
-    return;
-  } else if (std::abs(se2_error.x) < tol_x && std::abs(se2_error.y) > tol_y) {
-    RCLCPP_INFO(this->get_logger(), "종방향 수정 종료. 임시로 Success 발행");
-    control_success = true;
-    failure_message = "종방향 수정 종료";
-    return;
-  }
-
+  /*
+  상태머신: APPROACH → ALIGN_THETA → DWELL → DONE (단방향).
+  - APPROACH: 종/횡/각도 PID 동시 제어 + 시작거리 기반 동적 감속 ramp.
+  - ALIGN_THETA: v_x=0, w_z만 kp_theta * e_theta 로 제자리 회전 정렬.
+  - DWELL: 정지 publish 한 채 dwell_duration_sec 만큼 안정화.
+  - DONE: control_success 세팅.
+  y 오차는 의도적으로 무시 (홀로노믹 아님).
+  */
+  const float abs_ex = std::abs(se2_error.x);
+  const float abs_eth = std::abs(se2_error.degree_theta);
   geometry_msgs::msg::Twist cmd_vel;
-  cmd_vel = pid_controller_->compute_control(se2_error, dt);
+
+  switch (state_) {
+    case ApproachState::IDLE:
+      // 알고리즘 시작 시 APPROACH 로 전이되므로 정상 흐름에선 도달 불가.
+      return;
+
+    case ApproachState::APPROACH: {
+      // 시작 거리(initial_dist_) 기반으로 감속 구간 길이를 한 번 산정.
+      // 가까이서 시작하면 짧은 ramp, 멀리서 시작해도 최대 decel_dist_max 까지만.
+      const float effective_decel = std::clamp(
+          initial_dist_ * decel_ratio_, decel_dist_min_, decel_dist_max_);
+      const float v_scale = (effective_decel > 0.0F)
+                                ? std::clamp(abs_ex / effective_decel, 0.0F, 1.0F)
+                                : 1.0F;
+      cmd_vel = pid_controller_->compute_control(se2_error, dt, v_scale);
+
+      if (abs_ex < tol_x_) {
+        if (abs_eth < tol_theta_) {
+          state_ = ApproachState::DWELL;
+          dwell_start_time_ = current_time;
+          RCLCPP_INFO(this->get_logger(),
+                      "APPROACH → DWELL (ex=%.3f, eth=%.3f)", abs_ex, abs_eth);
+        } else {
+          state_ = ApproachState::ALIGN_THETA;
+          align_start_time_ = current_time;
+          pid_controller_->reset();
+          RCLCPP_INFO(this->get_logger(),
+                      "APPROACH → ALIGN_THETA (ex=%.3f, eth=%.3f)",
+                      abs_ex, abs_eth);
+        }
+      }
+      break;
+    }
+
+    case ApproachState::ALIGN_THETA: {
+      cmd_vel = pid_controller_->compute_align_only(se2_error.degree_theta);
+
+      if (abs_eth < tol_theta_) {
+        state_ = ApproachState::DWELL;
+        dwell_start_time_ = current_time;
+        RCLCPP_INFO(this->get_logger(),
+                    "ALIGN_THETA → DWELL (eth=%.3f)", abs_eth);
+      } else if ((current_time - align_start_time_).seconds() >
+                 align_timeout_sec_) {
+        RCLCPP_WARN(this->get_logger(),
+                    "ALIGN_THETA timeout (%.1fs) → DWELL anyway",
+                    align_timeout_sec_);
+        state_ = ApproachState::DWELL;
+        dwell_start_time_ = current_time;
+      }
+      break;
+    }
+
+    case ApproachState::DWELL: {
+      cmd_vel.linear.x = 0.0;
+      cmd_vel.angular.z = 0.0;
+      if ((current_time - dwell_start_time_).seconds() >
+          dwell_duration_sec_) {
+        state_ = ApproachState::DONE;
+      }
+      break;
+    }
+
+    case ApproachState::DONE: {
+      cmd_vel.linear.x = 0.0;
+      cmd_vel.angular.z = 0.0;
+      control_success = true;
+      break;
+    }
+  }
 
   cmd_vel_publisher_->publish(cmd_vel);
 
@@ -784,6 +875,14 @@ void ApproachNode::startAlgorithm() {
   control_success = false;
   control_failure = false;
 
+  // 상태머신/anchor/PID 초기화
+  state_ = ApproachState::APPROACH;
+  aim_anchor_captured_ = false;
+  initial_dist_ = 0.0F;
+  se2_error_initialized_ = false;
+  consecutive_outliers_ = 0;
+  if (pid_controller_) pid_controller_->reset();
+
   algorithm_start_flag = true;
 }
 
@@ -841,6 +940,96 @@ void ApproachNode::publishTrail() {
   trail_publisher_->publish(path);
   RCLCPP_INFO(this->get_logger(), "Published approach trail: %zu poses",
               path.poses.size());
+}
+
+bool ApproachNode::captureAimAnchor(const TargetEdge &target_edge,
+                                     const rclcpp::Time &stamp) {
+  /*
+  base 프레임에서 로봇 정면 ray (origin=0, dir=+x)와 target edge 직선의 교차점.
+    line: P(t) = c + t * a   (c=target_center, a=target_axis)
+    ray:  Q(s) = (s, 0)
+    교차: c.y + t * a.y = 0  →  t = -c.y / a.y
+  axis가 robot x 와 거의 평행이면 (|a.y| ~ 0) 교차점 정의 안되므로 target_center
+  로 fallback.
+  */
+  const Eigen::Vector2f &c = target_edge.target_center;
+  const Eigen::Vector2f &a = target_edge.target_axis;
+  const float half_L = target_edge.target_length * 0.5F;
+
+  Eigen::Vector2f aim_base;
+  const float eps = 1e-3F;
+  if (std::abs(a.y()) < eps) {
+    aim_base = c;
+  } else {
+    float t = -c.y() / a.y();
+    t = std::clamp(t, -half_L, half_L);
+    aim_base = c + t * a;
+  }
+
+  // base → odom 변환
+  geometry_msgs::msg::TransformStamped tf;
+  if (!getTransform(odom_frame_, target_frame_, tf, stamp)) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                         "captureAimAnchor: odom←base TF lookup failed");
+    return false;
+  }
+
+  const double yaw = tf2::getYaw(tf.transform.rotation);
+  const float cy_v = static_cast<float>(std::cos(yaw));
+  const float sy_v = static_cast<float>(std::sin(yaw));
+  const auto &tr = tf.transform.translation;
+  aim_anchor_odom_.x() =
+      cy_v * aim_base.x() - sy_v * aim_base.y() + static_cast<float>(tr.x);
+  aim_anchor_odom_.y() =
+      sy_v * aim_base.x() + cy_v * aim_base.y() + static_cast<float>(tr.y);
+
+  // 감속 ramp 산정용 초기 종방향 거리: anchor 기준 normal-projection - standoff.
+  const Eigen::Vector2f &n = target_edge.normal_axis;
+  initial_dist_ = std::abs(aim_base.dot(n) - target_standoff_distance_);
+
+  aim_anchor_captured_ = true;
+  RCLCPP_INFO(this->get_logger(),
+              "Aim anchor captured: base=(%.3f, %.3f) odom=(%.3f, %.3f) "
+              "init_dist=%.3f",
+              aim_base.x(), aim_base.y(), aim_anchor_odom_.x(),
+              aim_anchor_odom_.y(), initial_dist_);
+  return true;
+}
+
+bool ApproachNode::anchorInBase(const rclcpp::Time &stamp,
+                                 Eigen::Vector2f &out_xy) {
+  geometry_msgs::msg::TransformStamped tf;
+  if (!getTransform(target_frame_, odom_frame_, tf, stamp)) {
+    RCLCPP_DEBUG(this->get_logger(),
+                 "anchorInBase: base←odom TF lookup failed");
+    return false;
+  }
+  const double yaw = tf2::getYaw(tf.transform.rotation);
+  const float cy_v = static_cast<float>(std::cos(yaw));
+  const float sy_v = static_cast<float>(std::sin(yaw));
+  const auto &tr = tf.transform.translation;
+  out_xy.x() = cy_v * aim_anchor_odom_.x() - sy_v * aim_anchor_odom_.y() +
+               static_cast<float>(tr.x);
+  out_xy.y() = sy_v * aim_anchor_odom_.x() + cy_v * aim_anchor_odom_.y() +
+               static_cast<float>(tr.y);
+  return true;
+}
+
+bool ApproachNode::projectAnchorOnEdge(const TargetEdge &target_edge,
+                                        const rclcpp::Time &stamp,
+                                        Eigen::Vector2f &out_center) {
+  Eigen::Vector2f anchor_base;
+  if (!anchorInBase(stamp, anchor_base)) {
+    return false;
+  }
+  // 현재 edge 직선에 수직 투영 (부호 flip에 무관)
+  const Eigen::Vector2f &c = target_edge.target_center;
+  const Eigen::Vector2f a_unit = target_edge.target_axis.normalized();
+  float s = (anchor_base - c).dot(a_unit);
+  const float half_L = target_edge.target_length * 0.5F;
+  s = std::clamp(s, -half_L, half_L);
+  out_center = c + s * a_unit;
+  return true;
 }
 
 void ApproachNode::applySpatialRoi(

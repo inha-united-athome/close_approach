@@ -35,6 +35,14 @@
 
 #include <visualization_msgs/msg/marker.hpp>
 
+enum class ApproachState {
+  IDLE,
+  APPROACH,
+  ALIGN_THETA,
+  DWELL,
+  DONE
+};
+
 class ApproachNode : public rclcpp::Node {
 public:
   explicit ApproachNode(bool debug_enabled = false, bool measure_enabled = false);
@@ -100,6 +108,7 @@ private:
   float cluster_tolerance_ = 0.02F;
   int min_cluster_size_ = 100;
   int max_cluster_size_ = 10000;
+  float min_cluster_area_ = 0.09F;  // 30cm x 30cm. 물병/소품 컷, 박스/사람 통과.
   float fx_ = 0.0F;
   float fy_ = 0.0F;
   float cx_ = 0.0F;
@@ -118,6 +127,18 @@ private:
   float tol_theta_ = 0.08F;
   float base_to_rotationcore_ = 0.2F;
   float target_standoff_distance_ = 0.35F;
+
+  // 속도/감속 한계
+  float max_v_ = 0.10F;
+  float max_w_ = 0.2F;
+  float decel_dist_max_ = 0.20F;  // 멀리서 시작해도 감속 구간 최대치
+  float decel_dist_min_ = 0.05F;  // 너무 가까이서 시작해도 최소 ramp 확보
+  float decel_ratio_ = 0.5F;      // 시작 거리 대비 감속 구간 비율
+
+  // 상태머신 / 도착 안정화
+  float align_timeout_sec_ = 5.0F;
+  float dwell_duration_sec_ = 2.0F;
+
   bool debug_enabled_ = false;
   bool measure_enabled_ = false;
   std::filesystem::path debug_output_dir_;
@@ -136,6 +157,17 @@ private:
   OBB obb;
   SE2Error se2_error;
   SE2Error se2_error_prev;
+
+  // 상태머신
+  ApproachState state_ = ApproachState::IDLE;
+  rclcpp::Time dwell_start_time_;
+  rclcpp::Time align_start_time_;
+
+  // Aim anchor: 첫 프레임 시선 교차점을 odom 프레임에 고정 → 이후 매 프레임
+  // 현재 OBB edge 직선에 투영해서 target_center 로 사용.
+  bool aim_anchor_captured_ = false;
+  Eigen::Vector2f aim_anchor_odom_{0.0F, 0.0F};
+  float initial_dist_ = 0.0F;  // 첫 anchor 캡처 시점의 종방향 거리(감속 ramp 길이 산정용)
 
   // 스파이크 필터 상태 (덜덜 떨림 방지)
   bool se2_error_initialized_ = false;
@@ -182,4 +214,13 @@ private:
 
   void recordTrailPose();
   void publishTrail();
+
+  // Aim anchor 관련
+  bool captureAimAnchor(const TargetEdge &target_edge,
+                        const rclcpp::Time &stamp);
+  bool projectAnchorOnEdge(const TargetEdge &target_edge,
+                           const rclcpp::Time &stamp,
+                           Eigen::Vector2f &out_center);
+  // odom 에 박힌 anchor 를 stamp 시점의 base 프레임으로 변환.
+  bool anchorInBase(const rclcpp::Time &stamp, Eigen::Vector2f &out_xy);
 };

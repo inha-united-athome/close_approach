@@ -255,8 +255,17 @@ rclcpp_action::GoalResponse
 ApproachNode::handle_goal(const rclcpp_action::GoalUUID &uuid,
                           std::shared_ptr<const ApproachAction::Goal> goal) {
   (void)uuid;
-  (void)goal;
-  RCLCPP_INFO(this->get_logger(), "Received approach goal");
+  if (!goal || !std::isfinite(goal->goal_distance) ||
+      goal->goal_distance <= 0.0F) {
+    RCLCPP_WARN(this->get_logger(),
+                "Rejecting approach goal: invalid goal_distance=%.3f",
+                goal ? goal->goal_distance : -1.0F);
+    return rclcpp_action::GoalResponse::REJECT;
+  }
+
+  RCLCPP_INFO(this->get_logger(),
+              "Received approach goal: goal_distance=%.3f",
+              goal->goal_distance);
   return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
 
@@ -277,6 +286,12 @@ void ApproachNode::execute(
 
   auto feedback = std::make_shared<ApproachAction::Feedback>();
   auto result = std::make_shared<ApproachAction::Result>();
+  const auto goal = goal_handle->get_goal();
+  target_standoff_distance_ = goal->goal_distance;
+  RCLCPP_INFO(this->get_logger(),
+              "Set target_standoff_distance from action goal: %.3f",
+              target_standoff_distance_);
+
   if (!algorithm_start_flag) {
     algorithm_start_flag = true;
     startAlgorithm();
@@ -452,7 +467,6 @@ void ApproachNode::pointCloudCallback(
   */
   TargetEdge target_edge = edge_extractor_->extract_edges(
       obb.center, obb.axis1, obb.axis2, obb.length1, obb.length2);
-  this->get_parameter("target_standoff_distance", target_standoff_distance_);
 
   /*
   Aim anchor: 첫 유효 프레임에서 로봇 정면 ray ∩ target edge 직선 교차점을

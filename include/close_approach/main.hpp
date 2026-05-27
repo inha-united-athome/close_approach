@@ -125,7 +125,6 @@ private:
   float tol_x_ = 0.05F;
   float tol_y_ = 0.02F;
   float tol_theta_ = 0.08F;
-  float base_to_rotationcore_ = 0.2F;
   float target_standoff_distance_ = 0.35F;
 
   // 속도/감속 한계

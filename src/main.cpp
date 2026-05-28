@@ -2,6 +2,8 @@
 
 #include <filesystem>
 #include <functional>
+#include <chrono>
+#include <ctime>
 #include <iomanip>
 #include <memory>
 #include <sstream>
@@ -23,6 +25,22 @@ double elapsed_ms(const Clock::time_point &from) {
   return std::chrono::duration_cast<Ms>(Clock::now() - from).count();
 }
 
+std::string currentTimeForFilename() {
+  const auto now = std::chrono::system_clock::now();
+  const auto now_time_t = std::chrono::system_clock::to_time_t(now);
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      now.time_since_epoch()) %
+                  1000;
+
+  std::tm local_time{};
+  localtime_r(&now_time_t, &local_time);
+
+  std::ostringstream stamp;
+  stamp << std::put_time(&local_time, "%Y%m%d_%H%M%S") << "_"
+        << std::setw(3) << std::setfill('0') << ms.count();
+  return stamp.str();
+}
+
 } // namespace
 
 ApproachNode::ApproachNode()
@@ -31,23 +49,15 @@ ApproachNode::ApproachNode()
       qos_reliable_(rclcpp::QoS(rclcpp::KeepLast(10)).reliable()),
       tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_) {
 
-  this->declare_parameter<bool>("debug_enabled", false);
-  this->declare_parameter<bool>("measure_enabled", false);
-  this->get_parameter("debug_enabled", debug_enabled_);
-  this->get_parameter("measure_enabled", measure_enabled_);
-
-  if (measure_enabled_) {
-    RCLCPP_INFO(this->get_logger(),
-                "[MEAS] measure mode ON  -- header format:");
-    RCLCPP_INFO(this->get_logger(),
-                "[MEAS] cycle | sensor_lat_ms | proc_ms | total_delay_ms | "
-                "dt_ms | e_x | e_y | e_theta | v_x | w_z");
-  }
+  this->declare_parameter<bool>("debug", false);
+  this->declare_parameter<double>("debug_save_period_sec", 1.0);
+  this->get_parameter("debug", debug_enabled_);
+  this->get_parameter("debug_save_period_sec", debug_save_period_sec_);
 
   if (debug_enabled_) {
-    debug_output_dir_ = std::filesystem::current_path() / "debug" / "main";
+    debug_output_dir_ = "/home/thor/inha_logs/module/close_approach";
     std::filesystem::create_directories(debug_output_dir_);
-    RCLCPP_INFO(this->get_logger(), "Debug point clouds will be saved to %s",
+    RCLCPP_INFO(this->get_logger(), "Debug files will be saved to %s",
                 debug_output_dir_.c_str());
   }
 
@@ -495,14 +505,15 @@ void ApproachNode::pointCloudCallback(
     }
   }
 
-  if (measure_enabled_) {
-    RCLCPP_INFO(
-        this->get_logger(),
-        "[MEAS-STAGE] #%zu  voxel=%.1fms  outlier=%.1fms  ground=%.1fms  "
-        "cluster=%.1fms  proj+slice=%.1fms  obb=%.1fms  |  "
-        "sensor_lat=%.1fms",
-        measure_cycle_, t_voxel, t_outlier, t_ground, t_cluster, t_proj,
-        t_obb, sensor_latency_ms);
+  if (debug_enabled_) {
+    std::ostringstream line;
+    line << "[MEAS-STAGE] #" << measure_cycle_
+         << "  voxel=" << std::fixed << std::setprecision(1) << t_voxel
+         << "ms  outlier=" << t_outlier << "ms  ground=" << t_ground
+         << "ms  cluster=" << t_cluster << "ms  proj+slice=" << t_proj
+         << "ms  obb=" << t_obb << "ms  |  sensor_lat="
+         << sensor_latency_ms << "ms";
+    writeMeasureLog(line.str());
   }
 
   /*
@@ -599,16 +610,18 @@ void ApproachNode::pointCloudCallback(
 
   cmd_vel_publisher_->publish(cmd_vel);
 
-  if (measure_enabled_) {
+  if (debug_enabled_) {
     const double proc_ms = elapsed_ms(t_cb);
     const double total_delay_ms = sensor_latency_ms + proc_ms;
-    RCLCPP_INFO(
-        this->get_logger(),
-        "[MEAS] #%zu | sensor=%.1fms | proc=%.1fms | total=%.1fms | "
-        "dt=%.1fms | ex=%.4f | ey=%.4f | eth=%.4f | vx=%.4f | wz=%.4f",
-        measure_cycle_++, sensor_latency_ms, proc_ms, total_delay_ms,
-        dt * 1000.0, se2_error.x, se2_error.y, se2_error.degree_theta,
-        cmd_vel.linear.x, cmd_vel.angular.z);
+    std::ostringstream line;
+    line << "[MEAS] #" << measure_cycle_++
+         << " | sensor=" << std::fixed << std::setprecision(1)
+         << sensor_latency_ms << "ms | proc=" << proc_ms
+         << "ms | total=" << total_delay_ms << "ms | dt=" << dt * 1000.0
+         << "ms | ex=" << std::setprecision(4) << se2_error.x
+         << " | ey=" << se2_error.y << " | eth=" << se2_error.degree_theta
+         << " | vx=" << cmd_vel.linear.x << " | wz=" << cmd_vel.angular.z;
+    writeMeasureLog(line.str());
   }
 }
 
@@ -801,11 +814,23 @@ void ApproachNode::saveDebugCloud(
     return;
   }
 
-  std::ostringstream filename;
-  filename << std::setw(6) << std::setfill('0') << debug_cloud_index_ << "_"
-           << stage << ".pcd";
+  const auto now = Clock::now();
+  const auto last_save = last_debug_save_time_by_stage_.find(stage);
+  if (last_save != last_debug_save_time_by_stage_.end() &&
+      std::chrono::duration<double>(now - last_save->second).count() <
+          debug_save_period_sec_) {
+    return;
+  }
+  last_debug_save_time_by_stage_[stage] = now;
 
-  const auto file_path = debug_output_dir_ / filename.str();
+  std::ostringstream filename;
+  filename << currentTimeForFilename() << "_" << std::setw(6)
+           << std::setfill('0') << debug_cloud_index_ << "_" << stage
+           << ".pcd";
+
+  const auto &output_dir =
+      debug_action_output_dir_.empty() ? debug_output_dir_ : debug_action_output_dir_;
+  const auto file_path = output_dir / filename.str();
   const int result = pcl::io::savePCDFileBinary(file_path.string(), *cloud);
   if (result == 0) {
     ++debug_cloud_index_;
@@ -815,6 +840,69 @@ void ApproachNode::saveDebugCloud(
     RCLCPP_WARN(this->get_logger(), "Failed to save debug cloud: %s",
                 file_path.c_str());
   }
+}
+
+void ApproachNode::openDebugActionDirectory() {
+  if (!debug_enabled_) {
+    return;
+  }
+
+  debug_action_output_dir_ =
+      debug_output_dir_ / ("action_" + currentTimeForFilename());
+  std::filesystem::create_directories(debug_action_output_dir_);
+  debug_cloud_index_ = 0;
+  last_debug_save_time_by_stage_.clear();
+
+  RCLCPP_INFO(this->get_logger(), "Debug action files will be saved to %s",
+              debug_action_output_dir_.c_str());
+}
+
+void ApproachNode::openMeasureLog() {
+  if (!debug_enabled_) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(measure_log_mutex_);
+  if (measure_log_file_.is_open()) {
+    measure_log_file_.close();
+  }
+
+  const auto &output_dir =
+      debug_action_output_dir_.empty() ? debug_output_dir_ : debug_action_output_dir_;
+  measure_log_path_ = output_dir / ("measure_" + currentTimeForFilename() + ".txt");
+  measure_log_file_.open(measure_log_path_, std::ios::out | std::ios::trunc);
+  if (!measure_log_file_.is_open()) {
+    RCLCPP_WARN(this->get_logger(), "Failed to open measure log: %s",
+                measure_log_path_.c_str());
+    return;
+  }
+
+  measure_log_file_
+      << "[MEAS] cycle | sensor_lat_ms | proc_ms | total_delay_ms | dt_ms | "
+         "e_x | e_y | e_theta | v_x | w_z\n";
+  measure_log_file_.flush();
+  RCLCPP_INFO(this->get_logger(), "Measure log will be saved to %s",
+              measure_log_path_.c_str());
+}
+
+void ApproachNode::closeMeasureLog() {
+  std::lock_guard<std::mutex> lock(measure_log_mutex_);
+  if (measure_log_file_.is_open()) {
+    measure_log_file_.flush();
+    measure_log_file_.close();
+  }
+}
+
+void ApproachNode::writeMeasureLog(const std::string &line) {
+  if (!debug_enabled_) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(measure_log_mutex_);
+  if (!measure_log_file_.is_open()) {
+    return;
+  }
+  measure_log_file_ << line << '\n';
 }
 
 void ApproachNode::stopAlgorithm() {
@@ -834,9 +922,14 @@ void ApproachNode::stopAlgorithm() {
   control_success = false;
   control_failure = false;
   algorithm_start_flag = false;
+  closeMeasureLog();
 }
 
 void ApproachNode::startAlgorithm() {
+  measure_cycle_ = 0;
+  openDebugActionDirectory();
+  openMeasureLog();
+
   {
     std::lock_guard<std::mutex> lock(trail_mutex_);
     trail_.clear();

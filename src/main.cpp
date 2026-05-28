@@ -6,7 +6,6 @@
 #include <memory>
 #include <sstream>
 #include <utility>
-#include <vector>
 
 #include <cmath>
 
@@ -17,36 +16,6 @@
 
 namespace {
 
-bool hasDebugArg(int argc, char **argv) {
-  for (int i = 1; i < argc; ++i) {
-    if (std::string(argv[i]) == "debug" || std::string(argv[i]) == "--debug")
-      return true;
-  }
-  return false;
-}
-
-bool hasMeasureArg(int argc, char **argv) {
-  for (int i = 1; i < argc; ++i) {
-    if (std::string(argv[i]) == "measure" || std::string(argv[i]) == "--measure")
-      return true;
-  }
-  return false;
-}
-
-std::vector<char *> filterKnownArgs(int argc, char **argv) {
-  std::vector<char *> filtered_args;
-  filtered_args.reserve(static_cast<std::size_t>(argc));
-  if (argc > 0)
-    filtered_args.push_back(argv[0]);
-  for (int i = 1; i < argc; ++i) {
-    const std::string arg(argv[i]);
-    if (arg == "debug" || arg == "--debug" || arg == "measure" || arg == "--measure")
-      continue;
-    filtered_args.push_back(argv[i]);
-  }
-  return filtered_args;
-}
-
 using Clock = std::chrono::steady_clock;
 using Ms = std::chrono::duration<double, std::milli>;
 
@@ -56,12 +25,16 @@ double elapsed_ms(const Clock::time_point &from) {
 
 } // namespace
 
-ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
+ApproachNode::ApproachNode()
     : Node("approach_node"),
       qos_best_effort_(rclcpp::QoS(rclcpp::KeepLast(10)).best_effort()),
       qos_reliable_(rclcpp::QoS(rclcpp::KeepLast(10)).reliable()),
-      tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_),
-      debug_enabled_(debug_enabled), measure_enabled_(measure_enabled) {
+      tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_) {
+
+  this->declare_parameter<bool>("debug_enabled", false);
+  this->declare_parameter<bool>("measure_enabled", false);
+  this->get_parameter("debug_enabled", debug_enabled_);
+  this->get_parameter("measure_enabled", measure_enabled_);
 
   if (measure_enabled_) {
     RCLCPP_INFO(this->get_logger(),
@@ -96,7 +69,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->declare_parameter<std::string>("lidar_topic_name", "/livox/lidar");
   this->declare_parameter<std::string>("info_topic_name",
                                        "/camera/camera_head/color/camera_info");
-  this->declare_parameter<std::string>("target_frame", "base");
+  this->declare_parameter<std::string>("target_frame", "base_nav");
   this->declare_parameter<std::string>("odom_frame", "odom");
   this->declare_parameter<float>("roi_x_min", 0.1F);
   this->declare_parameter<float>("roi_x_max", 2.0F);
@@ -126,8 +99,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->declare_parameter<float>("tol_x", 0.03F);     // 3cm
   this->declare_parameter<float>("tol_y", 0.08F);     // 8cm
   this->declare_parameter<float>("tol_theta", 0.08F); // 4~5도
-  this->declare_parameter<float>("base_to_rotationcore", 0.2F);
-  this->declare_parameter<float>("target_standoff_distance", 0.5F); // 로봇과 목표 사이의 간격
+  this->declare_parameter<float>("target_standoff_distance", 0.3F); // 로봇과 목표 사이의 간격
   this->declare_parameter<float>("max_v", 0.10F);
   this->declare_parameter<float>("max_w", 0.2F);
   this->declare_parameter<float>("decel_dist_max", 0.20F);
@@ -175,7 +147,6 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->get_parameter("tol_x", tol_x_);
   this->get_parameter("tol_y", tol_y_);
   this->get_parameter("tol_theta", tol_theta_);
-  this->get_parameter("base_to_rotationcore", base_to_rotationcore_);
   this->get_parameter("target_standoff_distance", target_standoff_distance_);
   this->get_parameter("max_v", max_v_);
   this->get_parameter("max_w", max_w_);
@@ -244,8 +215,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
                              ground_height_, cluster_tolerance_,
                              min_cluster_size_, max_cluster_size_);
   pid_controller_->setParameters(kp_x_, kp_y_, kp_theta_, ki_x_, ki_y_,
-                                 ki_theta_, kd_x_, kd_y_, kd_theta_,
-                                 base_to_rotationcore_);
+                                 ki_theta_, kd_x_, kd_y_, kd_theta_);
   pid_controller_->setLimits(max_v_, max_w_);
 }
 /*
@@ -1069,11 +1039,8 @@ void ApproachNode::applySpatialRoi(
 }
 
 int main(int argc, char **argv) {
-  const bool debug_enabled = hasDebugArg(argc, argv);
-  const bool measure_enabled = hasMeasureArg(argc, argv);
-  std::vector<char *> filtered_args = filterKnownArgs(argc, argv);
-  rclcpp::init(static_cast<int>(filtered_args.size()), filtered_args.data());
-  rclcpp::spin(std::make_shared<ApproachNode>(debug_enabled, measure_enabled));
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<ApproachNode>());
   rclcpp::shutdown();
   return 0;
 }

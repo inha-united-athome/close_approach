@@ -45,7 +45,7 @@ enum class ApproachState {
 
 class ApproachNode : public rclcpp::Node {
 public:
-  explicit ApproachNode(bool debug_enabled = false, bool measure_enabled = false);
+  ApproachNode();
 
 private:
   using PointCloudMsg = sensor_msgs::msg::PointCloud2;

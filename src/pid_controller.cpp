@@ -3,8 +3,7 @@
 
 void PIDController::setParameters(float kp_x, float kp_y, float kp_theta,
                                   float ki_x, float ki_y, float ki_theta,
-                                  float kd_x, float kd_y, float kd_theta,
-                                  float base_to_rotationcore) {
+                                  float kd_x, float kd_y, float kd_theta) {
   this->kp_x = kp_x;
   this->kp_y = kp_y;
   this->kp_theta = kp_theta;
@@ -14,7 +13,6 @@ void PIDController::setParameters(float kp_x, float kp_y, float kp_theta,
   this->kd_x = kd_x;
   this->kd_y = kd_y;
   this->kd_theta = kd_theta;
-  this->base_to_rotationcore = base_to_rotationcore;
 }
 
 void PIDController::setLimits(float max_v, float max_w) {
@@ -34,8 +32,8 @@ PIDController::compute_control(const SE2Error &se2_error, float dt,
   if (dt <= 0.0f)
     return cmd_vel; // 방어 코드
 
-  // 1. 센서 기준 에러를 회전 중심(CoR) 기준으로 변환
-  float e_x = se2_error.x + base_to_rotationcore;
+  // 1. target_frame(base_nav) 기준 에러를 그대로 제어 입력으로 사용
+  float e_x = se2_error.x;
   float e_y = se2_error.y;
 
   float e_theta = se2_error.degree_theta;

@@ -2,13 +2,15 @@
 
 #include <filesystem>
 #include <functional>
+#include <chrono>
+#include <ctime>
 #include <iomanip>
 #include <memory>
 #include <sstream>
 #include <utility>
-#include <vector>
 
 #include <cmath>
+#include <limits>
 
 #include <pcl/io/pcd_io.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -17,36 +19,6 @@
 
 namespace {
 
-bool hasDebugArg(int argc, char **argv) {
-  for (int i = 1; i < argc; ++i) {
-    if (std::string(argv[i]) == "debug" || std::string(argv[i]) == "--debug")
-      return true;
-  }
-  return false;
-}
-
-bool hasMeasureArg(int argc, char **argv) {
-  for (int i = 1; i < argc; ++i) {
-    if (std::string(argv[i]) == "measure" || std::string(argv[i]) == "--measure")
-      return true;
-  }
-  return false;
-}
-
-std::vector<char *> filterKnownArgs(int argc, char **argv) {
-  std::vector<char *> filtered_args;
-  filtered_args.reserve(static_cast<std::size_t>(argc));
-  if (argc > 0)
-    filtered_args.push_back(argv[0]);
-  for (int i = 1; i < argc; ++i) {
-    const std::string arg(argv[i]);
-    if (arg == "debug" || arg == "--debug" || arg == "measure" || arg == "--measure")
-      continue;
-    filtered_args.push_back(argv[i]);
-  }
-  return filtered_args;
-}
-
 using Clock = std::chrono::steady_clock;
 using Ms = std::chrono::duration<double, std::milli>;
 
@@ -54,27 +26,62 @@ double elapsed_ms(const Clock::time_point &from) {
   return std::chrono::duration_cast<Ms>(Clock::now() - from).count();
 }
 
+std::string currentTimeForFilename() {
+  const auto now = std::chrono::system_clock::now();
+  const auto now_time_t = std::chrono::system_clock::to_time_t(now);
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      now.time_since_epoch()) %
+                  1000;
+
+  std::tm local_time{};
+  localtime_r(&now_time_t, &local_time);
+
+  std::ostringstream stamp;
+  stamp << std::put_time(&local_time, "%Y%m%d_%H%M%S") << "_"
+        << std::setw(3) << std::setfill('0') << ms.count();
+  return stamp.str();
+}
+
+void applySpatialRoiBounds(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
+                           float x_min, float x_max, float y_abs_max,
+                           float z_max) {
+  auto roi_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+  roi_cloud->points.reserve(cloud->points.size());
+  for (const auto &pt : cloud->points) {
+    if (pt.x < x_min || pt.x > x_max) {
+      continue;
+    }
+    if (std::abs(pt.y) > y_abs_max) {
+      continue;
+    }
+    if (pt.z > z_max) {
+      continue;
+    }
+    roi_cloud->points.push_back(pt);
+  }
+  roi_cloud->width = static_cast<std::uint32_t>(roi_cloud->points.size());
+  roi_cloud->height = 1;
+  roi_cloud->is_dense = false;
+  cloud = roi_cloud;
+}
+
 } // namespace
 
-ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
+ApproachNode::ApproachNode()
     : Node("approach_node"),
       qos_best_effort_(rclcpp::QoS(rclcpp::KeepLast(10)).best_effort()),
       qos_reliable_(rclcpp::QoS(rclcpp::KeepLast(10)).reliable()),
-      tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_),
-      debug_enabled_(debug_enabled), measure_enabled_(measure_enabled) {
+      tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_) {
 
-  if (measure_enabled_) {
-    RCLCPP_INFO(this->get_logger(),
-                "[MEAS] measure mode ON  -- header format:");
-    RCLCPP_INFO(this->get_logger(),
-                "[MEAS] cycle | sensor_lat_ms | proc_ms | total_delay_ms | "
-                "dt_ms | e_x | e_y | e_theta | v_x | w_z");
-  }
+  this->declare_parameter<bool>("debug", false);
+  this->declare_parameter<double>("debug_save_period_sec", 1.0);
+  this->get_parameter("debug", debug_enabled_);
+  this->get_parameter("debug_save_period_sec", debug_save_period_sec_);
 
   if (debug_enabled_) {
-    debug_output_dir_ = std::filesystem::current_path() / "debug" / "main";
+    debug_output_dir_ = "/home/thor/inha_logs/module/close_approach";
     std::filesystem::create_directories(debug_output_dir_);
-    RCLCPP_INFO(this->get_logger(), "Debug point clouds will be saved to %s",
+    RCLCPP_INFO(this->get_logger(), "Debug files will be saved to %s",
                 debug_output_dir_.c_str());
   }
 
@@ -96,7 +103,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->declare_parameter<std::string>("lidar_topic_name", "/livox/lidar");
   this->declare_parameter<std::string>("info_topic_name",
                                        "/camera/camera_head/color/camera_info");
-  this->declare_parameter<std::string>("target_frame", "base");
+  this->declare_parameter<std::string>("target_frame", "base_nav");
   this->declare_parameter<std::string>("odom_frame", "odom");
   this->declare_parameter<float>("roi_x_min", 0.1F);
   this->declare_parameter<float>("roi_x_max", 2.0F);
@@ -126,8 +133,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->declare_parameter<float>("tol_x", 0.03F);     // 3cm
   this->declare_parameter<float>("tol_y", 0.08F);     // 8cm
   this->declare_parameter<float>("tol_theta", 0.08F); // 4~5도
-  this->declare_parameter<float>("base_to_rotationcore", 0.2F);
-  this->declare_parameter<float>("target_standoff_distance", 0.5F); // 로봇과 목표 사이의 간격
+  this->declare_parameter<float>("target_standoff_distance", 0.3F); // 로봇과 목표 사이의 간격
   this->declare_parameter<float>("max_v", 0.10F);
   this->declare_parameter<float>("max_w", 0.2F);
   this->declare_parameter<float>("decel_dist_max", 0.20F);
@@ -175,7 +181,6 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
   this->get_parameter("tol_x", tol_x_);
   this->get_parameter("tol_y", tol_y_);
   this->get_parameter("tol_theta", tol_theta_);
-  this->get_parameter("base_to_rotationcore", base_to_rotationcore_);
   this->get_parameter("target_standoff_distance", target_standoff_distance_);
   this->get_parameter("max_v", max_v_);
   this->get_parameter("max_w", max_w_);
@@ -244,8 +249,7 @@ ApproachNode::ApproachNode(bool debug_enabled, bool measure_enabled)
                              ground_height_, cluster_tolerance_,
                              min_cluster_size_, max_cluster_size_);
   pid_controller_->setParameters(kp_x_, kp_y_, kp_theta_, ki_x_, ki_y_,
-                                 ki_theta_, kd_x_, kd_y_, kd_theta_,
-                                 base_to_rotationcore_);
+                                 ki_theta_, kd_x_, kd_y_, kd_theta_);
   pid_controller_->setLimits(max_v_, max_w_);
 }
 /*
@@ -255,8 +259,17 @@ rclcpp_action::GoalResponse
 ApproachNode::handle_goal(const rclcpp_action::GoalUUID &uuid,
                           std::shared_ptr<const ApproachAction::Goal> goal) {
   (void)uuid;
-  (void)goal;
-  RCLCPP_INFO(this->get_logger(), "Received approach goal");
+  if (!goal || !std::isfinite(goal->goal_distance) ||
+      goal->goal_distance <= 0.0F) {
+    RCLCPP_WARN(this->get_logger(),
+                "Rejecting approach goal: invalid goal_distance=%.3f",
+                goal ? goal->goal_distance : -1.0F);
+    return rclcpp_action::GoalResponse::REJECT;
+  }
+
+  RCLCPP_INFO(this->get_logger(),
+              "Received approach goal: goal_distance=%.3f",
+              goal->goal_distance);
   return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
 
@@ -277,6 +290,12 @@ void ApproachNode::execute(
 
   auto feedback = std::make_shared<ApproachAction::Feedback>();
   auto result = std::make_shared<ApproachAction::Result>();
+  const auto goal = goal_handle->get_goal();
+  target_standoff_distance_ = goal->goal_distance;
+  RCLCPP_INFO(this->get_logger(),
+              "Set target_standoff_distance from action goal: %.3f",
+              target_standoff_distance_);
+
   if (!algorithm_start_flag) {
     algorithm_start_flag = true;
     startAlgorithm();
@@ -372,6 +391,8 @@ void ApproachNode::pointCloudCallback(
 
   const auto t2 = Clock::now();
   roi_filter_->remove_ground(cloud, tf.transform);
+  applySpatialRoiBounds(cloud, -std::numeric_limits<float>::infinity(),
+                        roi_x_max_, roi_y_abs_max_, roi_z_max_);
   const double t_ground = elapsed_ms(t2);
 
   /*
@@ -396,10 +417,10 @@ void ApproachNode::pointCloudCallback(
   }
 
   /*
-  카메라는 ROI 미적용: FOV 자체가 좁아 자연스럽게 전방만 보고, 가까이 접근했을
-  때 roi_x_min 에 의해 객체가 통째로 잘려나가 충돌하는 문제를 피한다.
-  LiDAR cloud 는 lidarCallback 에서 이미 applySpatialRoi 통과한 상태로 합쳐져
-  있으므로 로봇 본체 자기반사 / 360° 잡음은 그쪽에서 걸러진다.
+  카메라는 가까이 접근했을 때 roi_x_min 에 의해 객체가 통째로 잘려나가는
+  문제를 피하기 위해 x_min 없이 좌우/거리/높이 ROI만 적용한다. LiDAR cloud 는
+  lidarCallback 에서 이미 applySpatialRoi 통과한 상태로 합쳐져 있으므로 로봇
+  본체 자기반사 / 360° 잡음은 그쪽에서 걸러진다.
   */
   if (cloud->empty()) {
     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
@@ -452,7 +473,6 @@ void ApproachNode::pointCloudCallback(
   */
   TargetEdge target_edge = edge_extractor_->extract_edges(
       obb.center, obb.axis1, obb.axis2, obb.length1, obb.length2);
-  this->get_parameter("target_standoff_distance", target_standoff_distance_);
 
   /*
   Aim anchor: 첫 유효 프레임에서 로봇 정면 ray ∩ target edge 직선 교차점을
@@ -511,14 +531,15 @@ void ApproachNode::pointCloudCallback(
     }
   }
 
-  if (measure_enabled_) {
-    RCLCPP_INFO(
-        this->get_logger(),
-        "[MEAS-STAGE] #%zu  voxel=%.1fms  outlier=%.1fms  ground=%.1fms  "
-        "cluster=%.1fms  proj+slice=%.1fms  obb=%.1fms  |  "
-        "sensor_lat=%.1fms",
-        measure_cycle_, t_voxel, t_outlier, t_ground, t_cluster, t_proj,
-        t_obb, sensor_latency_ms);
+  if (debug_enabled_) {
+    std::ostringstream line;
+    line << "[MEAS-STAGE] #" << measure_cycle_
+         << "  voxel=" << std::fixed << std::setprecision(1) << t_voxel
+         << "ms  outlier=" << t_outlier << "ms  ground=" << t_ground
+         << "ms  cluster=" << t_cluster << "ms  proj+slice=" << t_proj
+         << "ms  obb=" << t_obb << "ms  |  sensor_lat="
+         << sensor_latency_ms << "ms";
+    writeMeasureLog(line.str());
   }
 
   /*
@@ -615,16 +636,18 @@ void ApproachNode::pointCloudCallback(
 
   cmd_vel_publisher_->publish(cmd_vel);
 
-  if (measure_enabled_) {
+  if (debug_enabled_) {
     const double proc_ms = elapsed_ms(t_cb);
     const double total_delay_ms = sensor_latency_ms + proc_ms;
-    RCLCPP_INFO(
-        this->get_logger(),
-        "[MEAS] #%zu | sensor=%.1fms | proc=%.1fms | total=%.1fms | "
-        "dt=%.1fms | ex=%.4f | ey=%.4f | eth=%.4f | vx=%.4f | wz=%.4f",
-        measure_cycle_++, sensor_latency_ms, proc_ms, total_delay_ms,
-        dt * 1000.0, se2_error.x, se2_error.y, se2_error.degree_theta,
-        cmd_vel.linear.x, cmd_vel.angular.z);
+    std::ostringstream line;
+    line << "[MEAS] #" << measure_cycle_++
+         << " | sensor=" << std::fixed << std::setprecision(1)
+         << sensor_latency_ms << "ms | proc=" << proc_ms
+         << "ms | total=" << total_delay_ms << "ms | dt=" << dt * 1000.0
+         << "ms | ex=" << std::setprecision(4) << se2_error.x
+         << " | ey=" << se2_error.y << " | eth=" << se2_error.degree_theta
+         << " | vx=" << cmd_vel.linear.x << " | wz=" << cmd_vel.angular.z;
+    writeMeasureLog(line.str());
   }
 }
 
@@ -817,11 +840,23 @@ void ApproachNode::saveDebugCloud(
     return;
   }
 
-  std::ostringstream filename;
-  filename << std::setw(6) << std::setfill('0') << debug_cloud_index_ << "_"
-           << stage << ".pcd";
+  const auto now = Clock::now();
+  const auto last_save = last_debug_save_time_by_stage_.find(stage);
+  if (last_save != last_debug_save_time_by_stage_.end() &&
+      std::chrono::duration<double>(now - last_save->second).count() <
+          debug_save_period_sec_) {
+    return;
+  }
+  last_debug_save_time_by_stage_[stage] = now;
 
-  const auto file_path = debug_output_dir_ / filename.str();
+  std::ostringstream filename;
+  filename << currentTimeForFilename() << "_" << std::setw(6)
+           << std::setfill('0') << debug_cloud_index_ << "_" << stage
+           << ".pcd";
+
+  const auto &output_dir =
+      debug_action_output_dir_.empty() ? debug_output_dir_ : debug_action_output_dir_;
+  const auto file_path = output_dir / filename.str();
   const int result = pcl::io::savePCDFileBinary(file_path.string(), *cloud);
   if (result == 0) {
     ++debug_cloud_index_;
@@ -831,6 +866,69 @@ void ApproachNode::saveDebugCloud(
     RCLCPP_WARN(this->get_logger(), "Failed to save debug cloud: %s",
                 file_path.c_str());
   }
+}
+
+void ApproachNode::openDebugActionDirectory() {
+  if (!debug_enabled_) {
+    return;
+  }
+
+  debug_action_output_dir_ =
+      debug_output_dir_ / ("action_" + currentTimeForFilename());
+  std::filesystem::create_directories(debug_action_output_dir_);
+  debug_cloud_index_ = 0;
+  last_debug_save_time_by_stage_.clear();
+
+  RCLCPP_INFO(this->get_logger(), "Debug action files will be saved to %s",
+              debug_action_output_dir_.c_str());
+}
+
+void ApproachNode::openMeasureLog() {
+  if (!debug_enabled_) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(measure_log_mutex_);
+  if (measure_log_file_.is_open()) {
+    measure_log_file_.close();
+  }
+
+  const auto &output_dir =
+      debug_action_output_dir_.empty() ? debug_output_dir_ : debug_action_output_dir_;
+  measure_log_path_ = output_dir / ("measure_" + currentTimeForFilename() + ".txt");
+  measure_log_file_.open(measure_log_path_, std::ios::out | std::ios::trunc);
+  if (!measure_log_file_.is_open()) {
+    RCLCPP_WARN(this->get_logger(), "Failed to open measure log: %s",
+                measure_log_path_.c_str());
+    return;
+  }
+
+  measure_log_file_
+      << "[MEAS] cycle | sensor_lat_ms | proc_ms | total_delay_ms | dt_ms | "
+         "e_x | e_y | e_theta | v_x | w_z\n";
+  measure_log_file_.flush();
+  RCLCPP_INFO(this->get_logger(), "Measure log will be saved to %s",
+              measure_log_path_.c_str());
+}
+
+void ApproachNode::closeMeasureLog() {
+  std::lock_guard<std::mutex> lock(measure_log_mutex_);
+  if (measure_log_file_.is_open()) {
+    measure_log_file_.flush();
+    measure_log_file_.close();
+  }
+}
+
+void ApproachNode::writeMeasureLog(const std::string &line) {
+  if (!debug_enabled_) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(measure_log_mutex_);
+  if (!measure_log_file_.is_open()) {
+    return;
+  }
+  measure_log_file_ << line << '\n';
 }
 
 void ApproachNode::stopAlgorithm() {
@@ -850,9 +948,14 @@ void ApproachNode::stopAlgorithm() {
   control_success = false;
   control_failure = false;
   algorithm_start_flag = false;
+  closeMeasureLog();
 }
 
 void ApproachNode::startAlgorithm() {
+  measure_cycle_ = 0;
+  openDebugActionDirectory();
+  openMeasureLog();
+
   {
     std::lock_guard<std::mutex> lock(trail_mutex_);
     trail_.clear();
@@ -1034,32 +1137,13 @@ bool ApproachNode::projectAnchorOnEdge(const TargetEdge &target_edge,
 
 void ApproachNode::applySpatialRoi(
     pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud) {
-  auto roi_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
-  roi_cloud->points.reserve(cloud->points.size());
-  for (const auto &pt : cloud->points) {
-    if (pt.x < roi_x_min_ || pt.x > roi_x_max_) {
-      continue;
-    }
-    if (std::abs(pt.y) > roi_y_abs_max_) {
-      continue;
-    }
-    if (pt.z > roi_z_max_) {
-      continue;
-    }
-    roi_cloud->points.push_back(pt);
-  }
-  roi_cloud->width = static_cast<std::uint32_t>(roi_cloud->points.size());
-  roi_cloud->height = 1;
-  roi_cloud->is_dense = false;
-  cloud = roi_cloud;
+  applySpatialRoiBounds(cloud, roi_x_min_, roi_x_max_, roi_y_abs_max_,
+                        roi_z_max_);
 }
 
 int main(int argc, char **argv) {
-  const bool debug_enabled = hasDebugArg(argc, argv);
-  const bool measure_enabled = hasMeasureArg(argc, argv);
-  std::vector<char *> filtered_args = filterKnownArgs(argc, argv);
-  rclcpp::init(static_cast<int>(filtered_args.size()), filtered_args.data());
-  rclcpp::spin(std::make_shared<ApproachNode>(debug_enabled, measure_enabled));
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<ApproachNode>());
   rclcpp::shutdown();
   return 0;
 }

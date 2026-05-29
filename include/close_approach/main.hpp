@@ -10,10 +10,12 @@
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <fstream>
 #include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 
 #include "inha_interfaces/action/approach.hpp"
 #include <Eigen/Dense>
@@ -45,7 +47,7 @@ enum class ApproachState {
 
 class ApproachNode : public rclcpp::Node {
 public:
-  explicit ApproachNode(bool debug_enabled = false, bool measure_enabled = false);
+  ApproachNode();
 
 private:
   using PointCloudMsg = sensor_msgs::msg::PointCloud2;
@@ -125,7 +127,6 @@ private:
   float tol_x_ = 0.05F;
   float tol_y_ = 0.02F;
   float tol_theta_ = 0.08F;
-  float base_to_rotationcore_ = 0.2F;
   float target_standoff_distance_ = 0.35F;
 
   // 속도/감속 한계
@@ -140,9 +141,15 @@ private:
   float dwell_duration_sec_ = 2.0F;
 
   bool debug_enabled_ = false;
-  bool measure_enabled_ = false;
   std::filesystem::path debug_output_dir_;
+  std::filesystem::path debug_action_output_dir_;
+  std::filesystem::path measure_log_path_;
+  std::ofstream measure_log_file_;
+  std::mutex measure_log_mutex_;
   std::size_t debug_cloud_index_ = 0;
+  double debug_save_period_sec_ = 1.0;
+  std::unordered_map<std::string, std::chrono::steady_clock::time_point>
+      last_debug_save_time_by_stage_;
   std::size_t measure_cycle_ = 0;
 
   bool start_time_flag = false;
@@ -211,6 +218,10 @@ private:
   void publishTargetEdge(const TargetEdge &target_edge);
   void saveDebugCloud(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
                       const std::string &stage);
+  void openDebugActionDirectory();
+  void openMeasureLog();
+  void closeMeasureLog();
+  void writeMeasureLog(const std::string &line);
 
   void recordTrailPose();
   void publishTrail();

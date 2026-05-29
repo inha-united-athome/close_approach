@@ -4,15 +4,13 @@
 
 ```mermaid
 flowchart TD
-    A["main(argc, argv)"] --> B["debug / measure 인자 확인"]
-    B --> C["filterKnownArgs()"]
-    C --> D["rclcpp::init()"]
+    A["main(argc, argv)"] --> D["rclcpp::init()"]
     D --> E["ApproachNode 생성"]
     E --> F["rclcpp::spin()"]
     F --> G["rclcpp::shutdown()"]
 
     E --> E1["QoS / TF buffer / listener 초기화"]
-    E --> E2["debug / measure 모드 설정"]
+    E --> E2["ROS 파라미터로 debug / measure 모드 설정"]
     E --> E3["처리 모듈 생성"]
     E3 --> M1["Filter"]
     E3 --> M2["PlaneFilter"]

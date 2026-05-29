@@ -10,6 +10,7 @@
 #include <utility>
 
 #include <cmath>
+#include <limits>
 
 #include <pcl/io/pcd_io.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -39,6 +40,29 @@ std::string currentTimeForFilename() {
   stamp << std::put_time(&local_time, "%Y%m%d_%H%M%S") << "_"
         << std::setw(3) << std::setfill('0') << ms.count();
   return stamp.str();
+}
+
+void applySpatialRoiBounds(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
+                           float x_min, float x_max, float y_abs_max,
+                           float z_max) {
+  auto roi_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+  roi_cloud->points.reserve(cloud->points.size());
+  for (const auto &pt : cloud->points) {
+    if (pt.x < x_min || pt.x > x_max) {
+      continue;
+    }
+    if (std::abs(pt.y) > y_abs_max) {
+      continue;
+    }
+    if (pt.z > z_max) {
+      continue;
+    }
+    roi_cloud->points.push_back(pt);
+  }
+  roi_cloud->width = static_cast<std::uint32_t>(roi_cloud->points.size());
+  roi_cloud->height = 1;
+  roi_cloud->is_dense = false;
+  cloud = roi_cloud;
 }
 
 } // namespace
@@ -367,6 +391,8 @@ void ApproachNode::pointCloudCallback(
 
   const auto t2 = Clock::now();
   roi_filter_->remove_ground(cloud, tf.transform);
+  applySpatialRoiBounds(cloud, -std::numeric_limits<float>::infinity(),
+                        roi_x_max_, roi_y_abs_max_, roi_z_max_);
   const double t_ground = elapsed_ms(t2);
 
   /*
@@ -391,10 +417,10 @@ void ApproachNode::pointCloudCallback(
   }
 
   /*
-  카메라는 ROI 미적용: FOV 자체가 좁아 자연스럽게 전방만 보고, 가까이 접근했을
-  때 roi_x_min 에 의해 객체가 통째로 잘려나가 충돌하는 문제를 피한다.
-  LiDAR cloud 는 lidarCallback 에서 이미 applySpatialRoi 통과한 상태로 합쳐져
-  있으므로 로봇 본체 자기반사 / 360° 잡음은 그쪽에서 걸러진다.
+  카메라는 가까이 접근했을 때 roi_x_min 에 의해 객체가 통째로 잘려나가는
+  문제를 피하기 위해 x_min 없이 좌우/거리/높이 ROI만 적용한다. LiDAR cloud 는
+  lidarCallback 에서 이미 applySpatialRoi 통과한 상태로 합쳐져 있으므로 로봇
+  본체 자기반사 / 360° 잡음은 그쪽에서 걸러진다.
   */
   if (cloud->empty()) {
     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
@@ -1111,24 +1137,8 @@ bool ApproachNode::projectAnchorOnEdge(const TargetEdge &target_edge,
 
 void ApproachNode::applySpatialRoi(
     pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud) {
-  auto roi_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
-  roi_cloud->points.reserve(cloud->points.size());
-  for (const auto &pt : cloud->points) {
-    if (pt.x < roi_x_min_ || pt.x > roi_x_max_) {
-      continue;
-    }
-    if (std::abs(pt.y) > roi_y_abs_max_) {
-      continue;
-    }
-    if (pt.z > roi_z_max_) {
-      continue;
-    }
-    roi_cloud->points.push_back(pt);
-  }
-  roi_cloud->width = static_cast<std::uint32_t>(roi_cloud->points.size());
-  roi_cloud->height = 1;
-  roi_cloud->is_dense = false;
-  cloud = roi_cloud;
+  applySpatialRoiBounds(cloud, roi_x_min_, roi_x_max_, roi_y_abs_max_,
+                        roi_z_max_);
 }
 
 int main(int argc, char **argv) {

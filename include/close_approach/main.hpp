@@ -10,10 +10,12 @@
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <fstream>
 #include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 
 #include "inha_interfaces/action/approach.hpp"
 #include <Eigen/Dense>
@@ -139,9 +141,15 @@ private:
   float dwell_duration_sec_ = 2.0F;
 
   bool debug_enabled_ = false;
-  bool measure_enabled_ = false;
   std::filesystem::path debug_output_dir_;
+  std::filesystem::path debug_action_output_dir_;
+  std::filesystem::path measure_log_path_;
+  std::ofstream measure_log_file_;
+  std::mutex measure_log_mutex_;
   std::size_t debug_cloud_index_ = 0;
+  double debug_save_period_sec_ = 1.0;
+  std::unordered_map<std::string, std::chrono::steady_clock::time_point>
+      last_debug_save_time_by_stage_;
   std::size_t measure_cycle_ = 0;
 
   bool start_time_flag = false;
@@ -210,6 +218,10 @@ private:
   void publishTargetEdge(const TargetEdge &target_edge);
   void saveDebugCloud(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
                       const std::string &stage);
+  void openDebugActionDirectory();
+  void openMeasureLog();
+  void closeMeasureLog();
+  void writeMeasureLog(const std::string &line);
 
   void recordTrailPose();
   void publishTrail();

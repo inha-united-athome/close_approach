@@ -169,6 +169,7 @@ private:
   ApproachState state_ = ApproachState::IDLE;
   rclcpp::Time dwell_start_time_;
   rclcpp::Time align_start_time_;
+  bool post_align_approach_done_ = false;
 
   // Aim anchor: 첫 프레임 시선 교차점을 odom 프레임에 고정 → 이후 매 프레임
   // 현재 OBB edge 직선에 투영해서 target_center 로 사용.

@@ -553,9 +553,10 @@ void ApproachNode::pointCloudCallback(
   previous_time_ = current_time;
 
   /*
-  상태머신: APPROACH → ALIGN_THETA → DWELL → DONE (단방향).
+  상태머신: APPROACH → ALIGN_THETA → APPROACH(1회 재보정) → DWELL → DONE.
   - APPROACH: 종/횡/각도 PID 동시 제어 + 시작거리 기반 동적 감속 ramp.
   - ALIGN_THETA: v_x=0, w_z만 kp_theta * e_theta 로 제자리 회전 정렬.
+  - theta 정렬 후 x 오차가 다시 커졌으면 한 번 더 APPROACH 로 보정.
   - DWELL: 정지 publish 한 채 dwell_duration_sec 만큼 안정화.
   - DONE: control_success 세팅.
   y 오차는 의도적으로 무시 (홀로노믹 아님).
@@ -601,17 +602,38 @@ void ApproachNode::pointCloudCallback(
       cmd_vel = pid_controller_->compute_align_only(se2_error.degree_theta);
 
       if (abs_eth < tol_theta_) {
-        state_ = ApproachState::DWELL;
-        dwell_start_time_ = current_time;
-        RCLCPP_INFO(this->get_logger(),
-                    "ALIGN_THETA → DWELL (eth=%.3f)", abs_eth);
+        if (!post_align_approach_done_ && abs_ex >= tol_x_) {
+          post_align_approach_done_ = true;
+          state_ = ApproachState::APPROACH;
+          pid_controller_->reset();
+          RCLCPP_INFO(this->get_logger(),
+                      "ALIGN_THETA → APPROACH recheck (ex=%.3f, eth=%.3f)",
+                      abs_ex, abs_eth);
+        } else {
+          state_ = ApproachState::DWELL;
+          dwell_start_time_ = current_time;
+          RCLCPP_INFO(this->get_logger(),
+                      "ALIGN_THETA → DWELL (ex=%.3f, eth=%.3f)",
+                      abs_ex, abs_eth);
+        }
       } else if ((current_time - align_start_time_).seconds() >
                  align_timeout_sec_) {
-        RCLCPP_WARN(this->get_logger(),
-                    "ALIGN_THETA timeout (%.1fs) → DWELL anyway",
-                    align_timeout_sec_);
-        state_ = ApproachState::DWELL;
-        dwell_start_time_ = current_time;
+        if (!post_align_approach_done_ && abs_ex >= tol_x_) {
+          post_align_approach_done_ = true;
+          state_ = ApproachState::APPROACH;
+          pid_controller_->reset();
+          RCLCPP_WARN(this->get_logger(),
+                      "ALIGN_THETA timeout (%.1fs) → APPROACH recheck "
+                      "(ex=%.3f, eth=%.3f)",
+                      align_timeout_sec_, abs_ex, abs_eth);
+        } else {
+          RCLCPP_WARN(this->get_logger(),
+                      "ALIGN_THETA timeout (%.1fs) → DWELL anyway "
+                      "(ex=%.3f, eth=%.3f)",
+                      align_timeout_sec_, abs_ex, abs_eth);
+          state_ = ApproachState::DWELL;
+          dwell_start_time_ = current_time;
+        }
       }
       break;
     }
@@ -980,6 +1002,7 @@ void ApproachNode::startAlgorithm() {
 
   // 상태머신/anchor/PID 초기화
   state_ = ApproachState::APPROACH;
+  post_align_approach_done_ = false;
   aim_anchor_captured_ = false;
   initial_dist_ = 0.0F;
   se2_error_initialized_ = false;

@@ -356,11 +356,6 @@ install(
   DESTINATION include
 )
 
-install(
-  PROGRAMS
-    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/detector.py
-  DESTINATION lib/${PROJECT_NAME}
-)
 
 # =========================
 # Export

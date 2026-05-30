@@ -11,6 +11,7 @@
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <tf2/utils.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 namespace {
 
@@ -57,7 +58,7 @@ DeadReckoningApproachNode::DeadReckoningApproachNode()
   this->declare_parameter<std::string>("action_name",
                                        "dead_reckoning_approach");
   this->declare_parameter<std::string>("odom_frame", "odom");
-  this->declare_parameter<std::string>("robot_frame", "base");
+  this->declare_parameter<std::string>("robot_frame", "base_nav");
   this->declare_parameter<std::string>("cmd_vel_topic", "/cmd_vel");
   this->declare_parameter<float>("max_goal_distance", 0.20F);
   this->declare_parameter<float>("min_goal_distance", 0.01F);

@@ -224,6 +224,7 @@ ament_target_dependencies(dead_reckoning_approach_node
   geometry_msgs
   tf2
   tf2_ros
+  tf2_geometry_msgs
   inha_interfaces
 )
 

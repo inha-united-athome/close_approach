@@ -73,7 +73,7 @@ ApproachNode::ApproachNode()
       qos_reliable_(rclcpp::QoS(rclcpp::KeepLast(10)).reliable()),
       tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_) {
 
-  this->declare_parameter<bool>("debug", false);
+  this->declare_parameter<bool>("debug", true);
   this->declare_parameter<double>("debug_save_period_sec", 1.0);
   this->get_parameter("debug", debug_enabled_);
   this->get_parameter("debug_save_period_sec", debug_save_period_sec_);

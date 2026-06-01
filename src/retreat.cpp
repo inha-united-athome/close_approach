@@ -1,6 +1,7 @@
 #include "close_approach/retreat.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <thread>
@@ -21,14 +22,16 @@ RetreatNode::RetreatNode()
       tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_) {
 
   this->declare_parameter<std::string>("odom_frame", "odom");
-  this->declare_parameter<std::string>("robot_frame", "base");
+  this->declare_parameter<std::string>("robot_frame", "base_nav");
   this->declare_parameter<float>("retreat_speed", 0.07F);
   this->declare_parameter<float>("lookahead_max", 0.15F);
   this->declare_parameter<float>("lookahead_min", 0.05F);
   this->declare_parameter<float>("terminal_threshold", 0.05F);
   this->declare_parameter<float>("min_trail_length", 0.05F);
+  this->declare_parameter<float>("max_retreat_distance", 0.30F);
   this->declare_parameter<float>("w_max", 0.8F);
   this->declare_parameter<float>("control_rate_hz", 10.0F);
+  this->declare_parameter<float>("timeout_margin_sec", 3.0F);
 
   this->get_parameter("odom_frame", odom_frame_);
   this->get_parameter("robot_frame", robot_frame_);
@@ -37,8 +40,10 @@ RetreatNode::RetreatNode()
   this->get_parameter("lookahead_min", lookahead_min_);
   this->get_parameter("terminal_threshold", terminal_threshold_);
   this->get_parameter("min_trail_length", min_trail_length_);
+  this->get_parameter("max_retreat_distance", max_retreat_distance_);
   this->get_parameter("w_max", w_max_);
   this->get_parameter("control_rate_hz", control_rate_hz_);
+  this->get_parameter("timeout_margin_sec", timeout_margin_sec_);
 
   auto qos_reliable = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
   cmd_vel_publisher_ = this->create_publisher<geometry_msgs::msg::Twist>(
@@ -73,6 +78,11 @@ RetreatNode::handle_goal(const rclcpp_action::GoalUUID &uuid,
                          std::shared_ptr<const RetreatAction::Goal> goal) {
   (void)uuid;
   (void)goal;
+  if (active_) {
+    RCLCPP_WARN(this->get_logger(),
+                "Rejecting retreat goal: retreat is already active");
+    return rclcpp_action::GoalResponse::REJECT;
+  }
   RCLCPP_INFO(this->get_logger(), "Received retreat goal");
   return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
@@ -118,6 +128,18 @@ void RetreatNode::execute(
   auto result = std::make_shared<RetreatAction::Result>();
   auto feedback = std::make_shared<RetreatAction::Feedback>();
 
+  if (active_.exchange(true)) {
+    result->success = false;
+    result->success_message = "Retreat already active";
+    goal_handle->abort(result);
+    return;
+  }
+
+  auto finish = [this]() {
+    publishStop();
+    active_ = false;
+  };
+
   // 1) trail 스냅샷 + 역순 변환
   std::vector<geometry_msgs::msg::PoseStamped> rev;
   {
@@ -126,6 +148,7 @@ void RetreatNode::execute(
       RCLCPP_WARN(this->get_logger(), "No trail available for retreat");
       result->success = false;
       result->success_message = "No trail available";
+      finish();
       goal_handle->abort(result);
       return;
     }
@@ -145,10 +168,32 @@ void RetreatNode::execute(
     RCLCPP_INFO(this->get_logger(),
                 "Trail too short (%.3fm < %.3fm). Nothing to retreat.",
                 total_length, min_trail_length_);
-    publishStop();
+    finish();
     result->success = true;
     result->success_message = "Trail too short, no retreat needed";
     goal_handle->succeed(result);
+    return;
+  }
+
+  if (retreat_speed_ <= 0.0F) {
+    RCLCPP_ERROR(this->get_logger(),
+                 "Invalid retreat_speed %.3f. Retreat aborted.",
+                 retreat_speed_);
+    finish();
+    result->success = false;
+    result->success_message = "Invalid retreat speed";
+    goal_handle->abort(result);
+    return;
+  }
+
+  if (max_retreat_distance_ <= 0.0F) {
+    RCLCPP_ERROR(this->get_logger(),
+                 "Invalid max_retreat_distance %.3f. Retreat aborted.",
+                 max_retreat_distance_);
+    finish();
+    result->success = false;
+    result->success_message = "Invalid maximum retreat distance";
+    goal_handle->abort(result);
     return;
   }
 
@@ -156,10 +201,28 @@ void RetreatNode::execute(
   rclcpp::Rate loop_rate(control_rate_hz_);
   std::size_t closest_idx = 0;
   const double v = -static_cast<double>(retreat_speed_);
+  const double allowed_distance =
+      std::min(total_length, static_cast<double>(max_retreat_distance_));
+  const double timeout_sec =
+      allowed_distance / static_cast<double>(retreat_speed_) +
+      std::max(0.0, static_cast<double>(timeout_margin_sec_));
+  const auto control_start = std::chrono::steady_clock::now();
+  const auto &before_end = rev[rev.size() - 2].pose.position;
+  const auto &end = rev.back().pose.position;
+  const double end_segment_x = end.x - before_end.x;
+  const double end_segment_y = end.y - before_end.y;
+  double travelled_distance = 0.0;
+  double previous_rx = 0.0;
+  double previous_ry = 0.0;
+  bool previous_pose_available = false;
+
+  RCLCPP_INFO(this->get_logger(),
+              "Retreat started: trail=%.3fm timeout=%.2fs",
+              total_length, timeout_sec);
 
   while (rclcpp::ok()) {
     if (goal_handle->is_canceling()) {
-      publishStop();
+      finish();
       result->success = false;
       result->success_message = "Retreat canceled";
       goal_handle->canceled(result);
@@ -167,10 +230,45 @@ void RetreatNode::execute(
       return;
     }
 
+    const double elapsed_sec =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                      control_start)
+            .count();
+    if (elapsed_sec > timeout_sec) {
+      finish();
+      result->success = false;
+      result->success_message = "Retreat timeout";
+      goal_handle->abort(result);
+      RCLCPP_WARN(this->get_logger(),
+                  "Retreat timeout after %.2fs (limit=%.2fs)", elapsed_sec,
+                  timeout_sec);
+      return;
+    }
+
     double rx, ry, ryaw;
     if (!getRobotPoseInOdom(rx, ry, ryaw)) {
       loop_rate.sleep();
       continue;
+    }
+
+    if (previous_pose_available) {
+      const double step_x = rx - previous_rx;
+      const double step_y = ry - previous_ry;
+      travelled_distance += std::sqrt(step_x * step_x + step_y * step_y);
+    }
+    previous_rx = rx;
+    previous_ry = ry;
+    previous_pose_available = true;
+
+    if (travelled_distance >= max_retreat_distance_) {
+      finish();
+      result->success = false;
+      result->success_message = "Retreat exceeded maximum distance";
+      goal_handle->abort(result);
+      RCLCPP_WARN(this->get_logger(),
+                  "Retreat exceeded maximum distance: %.3fm >= %.3fm",
+                  travelled_distance, max_retreat_distance_);
+      return;
     }
 
     // closest point: 역행 방지를 위해 현재 인덱스부터 앞으로만 탐색.
@@ -196,12 +294,26 @@ void RetreatNode::execute(
     const double dy_end = rev.back().pose.position.y - ry;
     const double dist_end = std::sqrt(dx_end * dx_end + dy_end * dy_end);
     if (dist_end < terminal_threshold_) {
-      publishStop();
+      finish();
       result->success = true;
       result->success_message = "Retreat reached trail start";
       goal_handle->succeed(result);
       RCLCPP_INFO(this->get_logger(), "Retreat done (dist_end=%.3fm)",
                   dist_end);
+      return;
+    }
+
+    // 끝점을 지나쳤다면 고정 후진 속도로는 복구되지 않는다.
+    const double past_end =
+        (rx - end.x) * end_segment_x + (ry - end.y) * end_segment_y;
+    if (closest_idx + 1 == rev.size() && past_end > 0.0) {
+      finish();
+      result->success = false;
+      result->success_message =
+          "Retreat passed trail start without reaching tolerance";
+      goal_handle->abort(result);
+      RCLCPP_WARN(this->get_logger(),
+                  "Retreat passed trail start (dist_end=%.3fm)", dist_end);
       return;
     }
 
@@ -278,7 +390,7 @@ void RetreatNode::execute(
     loop_rate.sleep();
   }
 
-  publishStop();
+  finish();
   result->success = false;
   result->success_message = "Node shutdown";
   goal_handle->abort(result);

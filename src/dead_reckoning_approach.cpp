@@ -61,7 +61,7 @@ DeadReckoningApproachNode::DeadReckoningApproachNode()
   this->declare_parameter<std::string>("odom_frame", "odom");
   this->declare_parameter<std::string>("robot_frame", "base_nav");
   this->declare_parameter<std::string>("cmd_vel_topic", "/cmd_vel");
-  this->declare_parameter<float>("max_goal_distance", 0.20F);
+  this->declare_parameter<float>("max_goal_distance", 0.15F);
   this->declare_parameter<float>("min_goal_distance", 0.01F);
   this->declare_parameter<float>("goal_tolerance", 0.01F);
   this->declare_parameter<float>("max_v", 0.04F);

@@ -42,8 +42,12 @@ private:
   float lookahead_min_ = 0.05F;
   float terminal_threshold_ = 0.05F; // 끝점 도달 판정 거리(m)
   float min_trail_length_ = 0.05F;   // 이보다 짧으면 retreat 의미 없음
+  float max_retreat_distance_ = 0.30F; // 안전상 허용할 최대 누적 이동 거리(m)
   float w_max_ = 0.8F;               // 각속도 클램프
   float control_rate_hz_ = 10.0F;
+  float timeout_margin_sec_ = 3.0F;
+
+  std::atomic<bool> active_{false};
 
   void trailCallback(const nav_msgs::msg::Path::SharedPtr msg);
 

@@ -31,3 +31,34 @@ Nav2 brings the robot near the target area; `close_approach` performs the precis
 # Evaluation
 `TODO`
 
+# Logs
+## Close approach logs
+
+When the `debug` parameter is enabled, `approach_node` writes one timestamped
+directory per action under `/home/thor/inha_logs/module/close_approach`.
+Point cloud snapshots are rate-limited per processing stage by the
+`debug_save_period_sec` parameter.
+
+```text
+/home/thor/inha_logs/module/close_approach/action_YYYYMMDD_HHMMSS_mmm/
+├── measure_YYYYMMDD_HHMMSS_mmm.txt
+├── YYYYMMDD_HHMMSS_mmm_XXXXXX_roi_filtered.pcd
+├── YYYYMMDD_HHMMSS_mmm_XXXXXX_clustered.pcd
+└── YYYYMMDD_HHMMSS_mmm_XXXXXX_final.pcd
+```
+
+- `measure_*.txt`: per-cycle sensor latency, processing time, total delay,
+  control interval, SE(2) error, velocity command, and processing-stage timing
+- `*_roi_filtered.pcd`: point cloud after ROI filtering and sensor fusion
+- `*_clustered.pcd`: point cloud after target cluster selection
+- `*_final.pcd`: point cloud after projection and front slicing
+
+## Retreat logs
+
+`retreat_node` writes one timestamped directory per action under
+`/home/thor/inha_logs/module/close_approach/retreat` by default. Logging can be
+configured with the `log_enabled` and `log_dir` parameters.
+
+- `trail.csv`: reverse trail snapshot used by the retreat controller
+- `trace.csv`: per-control-cycle pose, distance, tracking error, and command data
+- `summary.csv`: action result, distance overshoot, and aggregate tracking errors

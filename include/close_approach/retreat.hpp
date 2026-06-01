@@ -1,9 +1,12 @@
 #pragma once
 
 #include <atomic>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "inha_interfaces/action/retreat.hpp"
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -47,6 +50,22 @@ private:
   float control_rate_hz_ = 10.0F;
   float timeout_margin_sec_ = 3.0F;
 
+  bool log_enabled_ = true;
+  std::filesystem::path log_dir_;
+  std::filesystem::path action_log_dir_;
+  std::filesystem::path action_trace_log_path_;
+  std::filesystem::path action_summary_log_path_;
+  std::ofstream action_trace_log_file_;
+  std::mutex log_mutex_;
+
+  struct TrackingStats {
+    std::size_t samples = 0;
+    double cross_track_error_sum = 0.0;
+    double max_cross_track_error = 0.0;
+    double yaw_error_sum = 0.0;
+    double max_yaw_error = 0.0;
+  };
+
   std::atomic<bool> active_{false};
 
   void trailCallback(const nav_msgs::msg::Path::SharedPtr msg);
@@ -61,4 +80,15 @@ private:
 
   bool getRobotPoseInOdom(double &x, double &y, double &yaw);
   void publishStop();
+  void openActionLog();
+  void closeActionLog();
+  void writeActionTrace(const std::string &line);
+  void writeTrailSnapshot(
+      const std::vector<geometry_msgs::msg::PoseStamped> &trail,
+      const std::vector<double> &cumulative_distance);
+  void writeActionSummary(const std::string &status, bool success,
+                          double elapsed_sec, std::size_t trail_pose_count,
+                          double trail_length, double allowed_distance,
+                          double travelled_distance, double final_dist_end,
+                          const TrackingStats &tracking_stats);
 };

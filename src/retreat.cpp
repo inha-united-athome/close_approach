@@ -260,14 +260,14 @@ void RetreatNode::execute(
     previous_ry = ry;
     previous_pose_available = true;
 
-    if (travelled_distance >= max_retreat_distance_) {
+    if (travelled_distance >= allowed_distance) {
       finish();
-      result->success = false;
-      result->success_message = "Retreat exceeded maximum distance";
-      goal_handle->abort(result);
-      RCLCPP_WARN(this->get_logger(),
-                  "Retreat exceeded maximum distance: %.3fm >= %.3fm",
-                  travelled_distance, max_retreat_distance_);
+      result->success = true;
+      result->success_message = "Retreat reached allowed distance";
+      goal_handle->succeed(result);
+      RCLCPP_INFO(this->get_logger(),
+                  "Retreat reached allowed distance: %.3fm >= %.3fm",
+                  travelled_distance, allowed_distance);
       return;
     }
 
@@ -303,16 +303,15 @@ void RetreatNode::execute(
       return;
     }
 
-    // 끝점을 지나쳤다면 고정 후진 속도로는 복구되지 않는다.
+    // 끝점을 지나쳤다면 정확한 tolerance에 못 들어가도 후진 목적은 달성한 것으로 본다.
     const double past_end =
         (rx - end.x) * end_segment_x + (ry - end.y) * end_segment_y;
     if (closest_idx + 1 == rev.size() && past_end > 0.0) {
       finish();
-      result->success = false;
-      result->success_message =
-          "Retreat passed trail start without reaching tolerance";
-      goal_handle->abort(result);
-      RCLCPP_WARN(this->get_logger(),
+      result->success = true;
+      result->success_message = "Retreat passed trail start";
+      goal_handle->succeed(result);
+      RCLCPP_INFO(this->get_logger(),
                   "Retreat passed trail start (dist_end=%.3fm)", dist_end);
       return;
     }
@@ -355,14 +354,7 @@ void RetreatNode::execute(
     const double dy_b = -sy * dx_w + cy * dy_w;
     const double L2 = dx_b * dx_b + dy_b * dy_b;
 
-    // 종속도: 끝점 근처에서 선형 감속.
     double v_cmd = v;
-    if (terminal_mode) {
-      const double scale =
-          std::clamp(remaining / static_cast<double>(terminal_threshold_),
-                     0.2, 1.0);
-      v_cmd = v * scale;
-    }
 
     double w_cmd = 0.0;
     if (L2 > 1e-6) {

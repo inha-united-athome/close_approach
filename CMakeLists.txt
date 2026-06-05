@@ -65,6 +65,10 @@ set(ALIGN_PERSON_CPP_SOURCES
   src/align_to_person.cpp
 )
 
+set(DEAD_RECKONING_APPROACH_CPP_SOURCES
+  src/dead_reckoning_approach.cpp
+)
+
 # =========================
 # Executables
 # =========================
@@ -82,6 +86,10 @@ add_executable(approach_head_control_node
 
 add_executable(align_to_person_node
   ${ALIGN_PERSON_CPP_SOURCES}
+)
+
+add_executable(dead_reckoning_approach_node
+  ${DEAD_RECKONING_APPROACH_CPP_SOURCES}
 )
 
 add_executable(retreat_node
@@ -121,6 +129,12 @@ target_include_directories(align_to_person_node
     ${PCL_INCLUDE_DIRS}
 )
 
+target_include_directories(dead_reckoning_approach_node
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
 target_include_directories(retreat_node
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -134,6 +148,7 @@ target_compile_features(approach_node PUBLIC cxx_std_17)
 target_compile_features(approach_head_control_node PUBLIC cxx_std_17)
 # target_compile_features(accumulation_and_icp_node PUBLIC cxx_std_17)
 target_compile_features(align_to_person_node PUBLIC cxx_std_17)
+target_compile_features(dead_reckoning_approach_node PUBLIC cxx_std_17)
 target_compile_features(retreat_node PUBLIC cxx_std_17)
 
 # =========================
@@ -203,6 +218,16 @@ ament_target_dependencies(align_to_person_node
   inha_interfaces
 )
 
+ament_target_dependencies(dead_reckoning_approach_node
+  rclcpp
+  rclcpp_action
+  geometry_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+  inha_interfaces
+)
+
 ament_target_dependencies(retreat_node
   rclcpp
   rclcpp_action
@@ -260,6 +285,10 @@ if(TARGET tf2_geometry_msgs::tf2_geometry_msgs)
   target_link_libraries(align_to_person_node
     tf2_geometry_msgs::tf2_geometry_msgs
   )
+
+  target_link_libraries(dead_reckoning_approach_node
+    tf2_geometry_msgs::tf2_geometry_msgs
+  )
 else()
   target_link_libraries(approach_node
     ${tf2_geometry_msgs_LIBRARIES}
@@ -278,6 +307,10 @@ else()
   # )
 
   target_link_libraries(align_to_person_node
+    ${tf2_geometry_msgs_LIBRARIES}
+  )
+
+  target_link_libraries(dead_reckoning_approach_node
     ${tf2_geometry_msgs_LIBRARIES}
   )
 endif()
@@ -314,6 +347,7 @@ install(
     approach_head_control_node
     # accumulation_and_icp_node
     align_to_person_node
+    dead_reckoning_approach_node
     retreat_node
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -323,11 +357,6 @@ install(
   DESTINATION include
 )
 
-install(
-  PROGRAMS
-    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/detector.py
-  DESTINATION lib/${PROJECT_NAME}
-)
 
 # =========================
 # Export

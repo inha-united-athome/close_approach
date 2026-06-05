@@ -65,6 +65,22 @@ void applySpatialRoiBounds(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
   cloud = roi_cloud;
 }
 
+Eigen::Affine2f transformToAffine2D(
+    const geometry_msgs::msg::TransformStamped &tf) {
+  const float yaw = static_cast<float>(tf2::getYaw(tf.transform.rotation));
+  const float cy = std::cos(yaw);
+  const float sy = std::sin(yaw);
+
+  Eigen::Affine2f affine = Eigen::Affine2f::Identity();
+  affine.linear()(0, 0) = cy;
+  affine.linear()(0, 1) = -sy;
+  affine.linear()(1, 0) = sy;
+  affine.linear()(1, 1) = cy;
+  affine.translation().x() = static_cast<float>(tf.transform.translation.x);
+  affine.translation().y() = static_cast<float>(tf.transform.translation.y);
+  return affine;
+}
+
 } // namespace
 
 ApproachNode::ApproachNode()
@@ -94,6 +110,7 @@ ApproachNode::ApproachNode()
   pid_controller_ = std::make_shared<PIDController>();
   edge_extractor_ = std::make_shared<EdgeExtractor>();
   error_estimator_ = std::make_shared<ErrorEstimator>();
+  target_selector_ = std::make_shared<TargetSelector>();
 
   /*
   파라미터 선언
@@ -147,6 +164,29 @@ ApproachNode::ApproachNode()
   this->declare_parameter<float>("trail_min_dist", 0.03F);
   this->declare_parameter<float>("trail_min_yaw", 0.052F);
   this->declare_parameter<float>("lidar_max_age_sec", 0.3F);
+  this->declare_parameter<float>("target_selector.edge_threshold", 0.03F);
+  this->declare_parameter<float>("target_selector.l_shape_step_deg", 1.0F);
+  this->declare_parameter<float>("target_selector.l_shape_sigma", 0.03F);
+  this->declare_parameter<float>("target_selector.ray_segment_tolerance", 0.03F);
+  this->declare_parameter<float>("target_selector.min_target_edge_support", 0.02F);
+  this->declare_parameter<float>("target_selector.min_fill_ratio", 0.50F);
+  this->declare_parameter<int>("target_selector.acquire_confirm_frames", 3);
+  this->declare_parameter<int>("target_selector.relock_confirm_frames", 3);
+  this->declare_parameter<int>("target_selector.max_lost_frames", 8);
+  this->declare_parameter<float>("target_selector.acquire_hit_gate", 0.15F);
+  this->declare_parameter<float>("target_selector.acquire_yaw_gate", 0.17F);
+  this->declare_parameter<float>("target_selector.lock_hit_gate", 0.30F);
+  this->declare_parameter<float>("target_selector.lock_yaw_gate", 0.35F);
+  this->declare_parameter<float>("target_selector.lock_min_length_ratio", 0.50F);
+  this->declare_parameter<float>("target_selector.lock_max_length_ratio", 2.00F);
+  this->declare_parameter<float>("target_selector.lock_min_area_ratio", 0.40F);
+  this->declare_parameter<float>("target_selector.lock_max_area_ratio", 2.50F);
+  this->declare_parameter<float>("target_selector.lock_min_normal_dot", 0.70F);
+  this->declare_parameter<float>("target_selector.score_hit_weight", 2.0F);
+  this->declare_parameter<float>("target_selector.score_yaw_weight", 1.0F);
+  this->declare_parameter<float>("target_selector.score_length_weight", 0.5F);
+  this->declare_parameter<float>("target_selector.score_area_weight", 0.3F);
+  this->declare_parameter<float>("target_selector.score_support_weight", 0.5F);
 
   this->get_parameter("pointcloud_topic_name", pointcloud_topic_name_);
   this->get_parameter("lidar_topic_name", lidar_topic_name_);
@@ -195,6 +235,57 @@ ApproachNode::ApproachNode()
   this->get_parameter("trail_min_dist", trail_min_dist_);
   this->get_parameter("trail_min_yaw", trail_min_yaw_);
   this->get_parameter("lidar_max_age_sec", lidar_max_age_sec_);
+  this->get_parameter("target_selector.edge_threshold",
+                      target_selector_params_.edge_threshold);
+  this->get_parameter("target_selector.l_shape_step_deg",
+                      target_selector_params_.l_shape_angle_step_deg);
+  this->get_parameter("target_selector.l_shape_sigma",
+                      target_selector_params_.l_shape_sigma);
+  this->get_parameter("target_selector.ray_segment_tolerance",
+                      target_selector_params_.ray_segment_tolerance);
+  this->get_parameter("target_selector.min_target_edge_support",
+                      target_selector_params_.min_target_edge_support_ratio);
+  this->get_parameter("target_selector.min_fill_ratio",
+                      target_selector_params_.min_fill_ratio);
+  this->get_parameter("target_selector.acquire_confirm_frames",
+                      target_selector_params_.acquire_confirm_frames);
+  this->get_parameter("target_selector.relock_confirm_frames",
+                      target_selector_params_.relock_confirm_frames);
+  this->get_parameter("target_selector.max_lost_frames",
+                      target_selector_params_.max_lost_frames);
+  this->get_parameter("target_selector.acquire_hit_gate",
+                      target_selector_params_.acquire_hit_gate);
+  this->get_parameter("target_selector.acquire_yaw_gate",
+                      target_selector_params_.acquire_yaw_gate);
+  this->get_parameter("target_selector.lock_hit_gate",
+                      target_selector_params_.lock_hit_gate);
+  this->get_parameter("target_selector.lock_yaw_gate",
+                      target_selector_params_.lock_yaw_gate);
+  this->get_parameter("target_selector.lock_min_length_ratio",
+                      target_selector_params_.lock_min_length_ratio);
+  this->get_parameter("target_selector.lock_max_length_ratio",
+                      target_selector_params_.lock_max_length_ratio);
+  this->get_parameter("target_selector.lock_min_area_ratio",
+                      target_selector_params_.lock_min_area_ratio);
+  this->get_parameter("target_selector.lock_max_area_ratio",
+                      target_selector_params_.lock_max_area_ratio);
+  this->get_parameter("target_selector.lock_min_normal_dot",
+                      target_selector_params_.lock_min_normal_dot);
+  this->get_parameter("target_selector.score_hit_weight",
+                      target_selector_params_.score_hit_weight);
+  this->get_parameter("target_selector.score_yaw_weight",
+                      target_selector_params_.score_yaw_weight);
+  this->get_parameter("target_selector.score_length_weight",
+                      target_selector_params_.score_length_weight);
+  this->get_parameter("target_selector.score_area_weight",
+                      target_selector_params_.score_area_weight);
+  this->get_parameter("target_selector.score_support_weight",
+                      target_selector_params_.score_support_weight);
+
+  target_selector_params_.cluster_tolerance = cluster_tolerance_;
+  target_selector_params_.min_cluster_size = min_cluster_size_;
+  target_selector_params_.max_cluster_size = max_cluster_size_;
+  target_selector_params_.min_cluster_area = min_cluster_area_;
 
   /*
   ROS2 Publisher && Subscriber 설정
@@ -251,6 +342,7 @@ ApproachNode::ApproachNode()
   pid_controller_->setParameters(kp_x_, kp_y_, kp_theta_, ki_x_, ki_y_,
                                  ki_theta_, kd_x_, kd_y_, kd_theta_);
   pid_controller_->setLimits(max_v_, max_w_);
+  target_selector_->setParameters(target_selector_params_);
 }
 /*
 Ros2 Action 관련 함수들
@@ -436,58 +528,65 @@ void ApproachNode::pointCloudCallback(
   debugging_pointcloud_publisher_->publish(filtered_cloud_msg);
   saveDebugCloud(cloud, "roi_filtered");
 
-  /*
-  BBOX를 통해 관심영역을 설정하여서 뒤에 다른 물체들 혹은 여러 물체들이 잡혔을
-  수도 있기에 클러스터링을 통해 가장 큰 클러스터만 남긴다.
-  */
   const auto t3 = Clock::now();
-  kdtree->setInputCloud(cloud);
-  // anchor 가 잡혀있으면 그 위치 기준으로 가까운 클러스터 선택, 아니면 로봇 원점.
-  // 첫 프레임 한정 anchor 없음 → 가장 가까운 클러스터.
-  Eigen::Vector2f anchor_base_for_cluster;
-  const Eigen::Vector2f *anchor_ptr = nullptr;
-  if (aim_anchor_captured_ &&
-      anchorInBase(pointcloud_msg->header.stamp, anchor_base_for_cluster)) {
-    anchor_ptr = &anchor_base_for_cluster;
+  geometry_msgs::msg::TransformStamped base_to_odom_tf;
+  if (!getTransform(odom_frame_, target_frame_, base_to_odom_tf,
+                    pointcloud_msg->header.stamp)) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                         "Failed to get odom<-base TF for target lock.");
+    geometry_msgs::msg::Twist stop;
+    cmd_vel_publisher_->publish(stop);
+    return;
   }
-  roi_filter_->cluster_points(cloud, kdtree, min_cluster_area_, anchor_ptr);
-  const double t_cluster = elapsed_ms(t3);
-  saveDebugCloud(cloud, "clustered");
 
+  TargetSelectorResult selection;
+  const bool target_valid =
+      target_selector_->select(cloud, transformToAffine2D(base_to_odom_tf),
+                               selection);
+  const double t_cluster = elapsed_ms(t3);
+
+  if (!target_valid) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                         "Target selector waiting: state=%s lost=%d reason=%s",
+                         selection.state.c_str(), selection.lost_count,
+                         selection.reason.c_str());
+    geometry_msgs::msg::Twist stop;
+    cmd_vel_publisher_->publish(stop);
+    return;
+  }
+
+  cloud = selection.selected_cloud;
+  saveDebugCloud(cloud, "clustered");
   publish3Dpointcloud(cloud);
 
   const auto t4 = Clock::now();
-  roi_filter_->projection_filter(cloud);
-  roi_filter_->front_slicing(cloud);
+  auto final_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>(*cloud);
+  roi_filter_->projection_filter(final_cloud);
   const double t_proj = elapsed_ms(t4);
-  saveDebugCloud(cloud, "final");
+  saveDebugCloud(final_cloud, "final");
 
   const auto t5 = Clock::now();
-  obb = plane_filter_->compute_OBB(cloud);
+  obb = selection.obb;
   const double t_obb = elapsed_ms(t5);
   publish2DOBB(obb.center, obb.axis1, obb.axis2, obb.length1, obb.length2);
 
-  /*
-  OBB에서 구한 사각형 중 로봇과 가장 가까우면서도 수평방향을 띄고 있는 축을
-  내적을 통해 구한다.
-  */
-  TargetEdge target_edge = edge_extractor_->extract_edges(
-      obb.center, obb.axis1, obb.axis2, obb.length1, obb.length2);
-
-  /*
-  Aim anchor: 첫 유효 프레임에서 로봇 정면 ray ∩ target edge 직선 교차점을
-  odom 프레임에 박아두고, 이후 매 프레임 현재 OBB edge 직선에 수직 투영해서
-  target_center 로 사용한다. → 시작 시 본 지점을 향해 계속 접근.
-  */
-  if (!aim_anchor_captured_ && target_edge.target_length > 0.1F) {
-    captureAimAnchor(target_edge, pointcloud_msg->header.stamp);
-  }
-  if (aim_anchor_captured_) {
-    Eigen::Vector2f projected;
-    if (projectAnchorOnEdge(target_edge, pointcloud_msg->header.stamp,
-                            projected)) {
-      target_edge.target_center = projected;
-    }
+  TargetEdge target_edge = selection.edge;
+  if (selection.newly_locked || initial_dist_ <= 1e-4F) {
+    initial_dist_ =
+        std::abs(target_edge.target_center.dot(target_edge.normal_axis) -
+                 target_standoff_distance_);
+    RCLCPP_INFO(this->get_logger(),
+                "Target locked: cluster=%zu hit_base=(%.3f, %.3f) "
+                "hit_odom=(%.3f, %.3f) yaw=%.3f len=%.3f area=%.3f "
+                "fill=%.3f target_support=%.3f init_dist=%.3f",
+                selection.cluster_id, selection.hit_base.x(),
+                selection.hit_base.y(), selection.hit_odom.x(),
+                selection.hit_odom.y(),
+                std::atan2(target_edge.normal_axis.y(),
+                           target_edge.normal_axis.x()),
+                target_edge.target_length, selection.area,
+                selection.metrics.fill_ratio,
+                selection.metrics.target_edge_support_ratio, initial_dist_);
   }
 
   publishTargetEdge(target_edge);
@@ -1008,6 +1107,7 @@ void ApproachNode::startAlgorithm() {
   se2_error_initialized_ = false;
   consecutive_outliers_ = 0;
   if (pid_controller_) pid_controller_->reset();
+  if (target_selector_) target_selector_->reset();
 
   algorithm_start_flag = true;
 }

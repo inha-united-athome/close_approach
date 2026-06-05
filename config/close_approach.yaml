@@ -1,0 +1,84 @@
+approach_node:
+  ros__parameters:
+    debug: true
+    debug_save_period_sec: 1.0
+
+    pointcloud_topic_name: /camera/camera_head/depth/color/points
+    lidar_topic_name: /livox/lidar
+    info_topic_name: /camera/camera_head/color/camera_info
+    target_frame: base_nav
+    odom_frame: odom
+
+    roi_x_min: 0.1
+    roi_x_max: 2.0
+    roi_y_abs_max: 0.8
+    roi_z_max: 1.5
+
+    leaf_size: 0.03
+    mean_k: 50
+    stddev_mul_thresh: 0.5
+    ground_height: 0.1
+
+    cluster_tolerance: 0.03
+    min_cluster_size: 100
+    max_cluster_size: 10000
+    min_cluster_area: 0.09
+
+    kp_x: 0.25
+    kp_y: 1.5
+    kp_theta: 1.2
+    ki_x: 0.0
+    ki_y: 0.0
+    ki_theta: 0.0
+    kd_x: 0.0
+    kd_y: 0.0
+    kd_theta: 0.0
+
+    tol_x: 0.03
+    tol_y: 0.08
+    tol_theta: 0.08
+    target_standoff_distance: 0.3
+
+    max_v: 0.10
+    max_w: 0.2
+    decel_dist_max: 0.20
+    decel_dist_min: 0.05
+    decel_ratio: 0.5
+    align_timeout_sec: 5.0
+    dwell_duration_sec: 2.0
+
+    spike_dy_max: 0.25
+    spike_dtheta_max: 0.25
+    max_consecutive_outliers: 5
+
+    trail_min_dist: 0.03
+    trail_min_yaw: 0.052
+    lidar_max_age_sec: 0.3
+
+    target_selector:
+      edge_threshold: 0.03
+      l_shape_step_deg: 1.0
+      l_shape_sigma: 0.03
+      ray_segment_tolerance: 0.03
+      min_target_edge_support: 0.02
+      min_fill_ratio: 0.50
+
+      acquire_confirm_frames: 3
+      relock_confirm_frames: 3
+      max_lost_frames: 8
+      acquire_hit_gate: 0.15
+      acquire_yaw_gate: 0.17
+
+      lock_hit_gate: 0.30
+      lock_yaw_gate: 0.35
+      lock_min_length_ratio: 0.50
+      lock_max_length_ratio: 2.00
+      lock_min_area_ratio: 0.40
+      lock_max_area_ratio: 2.50
+      lock_min_normal_dot: 0.70
+
+      score_hit_weight: 2.0
+      score_yaw_weight: 1.0
+      score_length_weight: 0.5
+      score_area_weight: 0.3
+      score_support_weight: 0.5

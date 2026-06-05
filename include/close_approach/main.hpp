@@ -6,6 +6,7 @@
 #include "close_approach/pid_controller.hpp"
 #include "close_approach/plane_filter.hpp"
 #include "close_approach/roi_filter.hpp"
+#include "close_approach/target_selector.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -61,6 +62,7 @@ private:
   std::shared_ptr<PIDController> pid_controller_;
   std::shared_ptr<ErrorEstimator> error_estimator_;
   std::shared_ptr<EdgeExtractor> edge_extractor_;
+  std::shared_ptr<TargetSelector> target_selector_;
 
   rclcpp_action::Server<ApproachAction>::SharedPtr approach_action_server_;
 
@@ -111,6 +113,7 @@ private:
   int min_cluster_size_ = 100;
   int max_cluster_size_ = 10000;
   float min_cluster_area_ = 0.09F;  // 30cm x 30cm. 물병/소품 컷, 박스/사람 통과.
+  TargetSelectorParams target_selector_params_;
   float fx_ = 0.0F;
   float fy_ = 0.0F;
   float cx_ = 0.0F;

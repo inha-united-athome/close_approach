@@ -581,8 +581,9 @@ void ApproachNode::pointCloudCallback(
   {
     std::lock_guard<std::mutex> lock(lidar_cloud_mutex_);
     if (latest_lidar_cloud_ && !latest_lidar_cloud_->empty()) {
+      rclcpp::Time camera_stamp(pointcloud_msg->header.stamp);
       const double age =
-          (this->now() - latest_lidar_stamp_).seconds();
+          std::abs((camera_stamp - latest_lidar_stamp_).seconds());
       if (age < static_cast<double>(lidar_max_age_sec_)) {
         *cloud += *latest_lidar_cloud_;
       } else {

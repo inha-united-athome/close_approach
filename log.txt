@@ -1,0 +1,200 @@
+[approach_node-1] [INFO] [1780724458.887359464] [approach_node]: Target locked: cluster=0 hit_base=(0.523, 0.000) hit_odom=(2.336, 2.959) yaw=0.227 len=0.740 area=0.966 fill=0.914 target_support=0.079 init_dist=0.209
+[approach_node-1] [INFO] [1780724458.887442928] [error_estimator]: x_error: 0.209389
+[approach_node-1] [INFO] [1780724458.887447178] [error_estimator]: y_error: -0.117602
+[approach_node-1] [INFO] [1780724458.887449975] [error_estimator]: theta_error: 0.226894
+[approach_node-1] [WARN] [1780724459.069006302] [approach_node]: Target selector waiting: state=LOST lost=2 reason=no candidate passed lock gate
+[approach_node-1] [INFO] [1780724459.320486415] [approach_node]: Executing approach
+[approach_node-1] [INFO] [1780724459.952990840] [approach_node]: Target locked: cluster=0 hit_base=(0.517, 0.000) hit_odom=(2.333, 2.956) yaw=0.209 len=0.739 area=0.287 fill=0.798 target_support=0.131 init_dist=0.206
+[approach_node-1] [INFO] [1780724459.953071554] [error_estimator]: x_error: 0.205936
+[approach_node-1] [INFO] [1780724459.953075712] [error_estimator]: y_error: -0.107540
+[approach_node-1] [INFO] [1780724459.953078786] [error_estimator]: theta_error: 0.209440
+[approach_node-1] [WARN] [1780724460.135708631] [approach_node]: Target selector waiting: state=LOST lost=1 reason=relocking 1/3
+[approach_node-1] [WARN] [1780724460.341876426] [approach_node]: Stale lidar cloud (0.34s > 0.30s), skip concat
+[approach_node-1] [INFO] [1780724460.466439498] [error_estimator]: x_error: 0.208712
+[approach_node-1] [INFO] [1780724460.466475220] [error_estimator]: y_error: -0.108557
+[approach_node-1] [INFO] [1780724460.466479192] [error_estimator]: theta_error: 0.209440
+[approach_node-1] [WARN] [1780724461.164305545] [approach_node]: Target selector waiting: state=LOST lost=7 reason=no valid candidates
+[approach_node-1] [INFO] [1780724461.320498777] [approach_node]: Executing approach
+[approach_node-1] [INFO] [1780724461.579001502] [approach_node]: Target locked: cluster=0 hit_base=(0.498, 0.000) hit_odom=(2.338, 2.942) yaw=0.227 len=0.753 area=0.552 fill=0.902 target_support=0.067 init_dist=0.185
+[approach_node-1] [INFO] [1780724461.579081281] [error_estimator]: x_error: 0.185267
+[approach_node-1] [INFO] [1780724461.579085855] [error_estimator]: y_error: -0.112033
+[approach_node-1] [INFO] [1780724461.579088661] [error_estimator]: theta_error: 0.226894
+[approach_node-1] [INFO] [1780724462.133829661] [error_estimator]: x_error: 0.199993
+[approach_node-1] [INFO] [1780724462.133869967] [error_estimator]: y_error: -0.097899
+[approach_node-1] [INFO] [1780724462.133873893] [error_estimator]: theta_error: 0.191988
+[approach_node-1] [WARN] [1780724462.366396841] [approach_node]: Target selector waiting: state=LOST lost=1 reason=no valid candidates
+[approach_node-1] [WARN] [1780724462.425838363] [approach_node]: Stale lidar cloud (0.33s > 0.30s), skip concat
+[approach_node-1] [INFO] [1780724463.163134451] [error_estimator]: x_error: 0.163068
+[approach_node-1] [INFO] [1780724463.163172404] [error_estimator]: y_error: -0.091770
+[approach_node-1] [INFO] [1780724463.163176108] [error_estimator]: theta_error: 0.122173
+[approach_node-1] [INFO] [1780724463.420498130] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724463.436113250] [approach_node]: Target selector waiting: state=LOST lost=2 reason=no valid candidates
+[approach_node-1] [INFO] [1780724464.048196594] [error_estimator]: x_error: 0.160801
+[approach_node-1] [INFO] [1780724464.048237928] [error_estimator]: y_error: -0.091981
+[approach_node-1] [INFO] [1780724464.048241965] [error_estimator]: theta_error: 0.122173
+[approach_node-1] [WARN] [1780724464.443597174] [approach_node]: Stale lidar cloud (0.34s > 0.30s), skip concat
+[approach_node-1] [WARN] [1780724464.478585732] [approach_node]: Target selector waiting: state=LOST lost=4 reason=no valid candidates
+[approach_node-1] [INFO] [1780724464.940372885] [error_estimator]: x_error: 0.158785
+[approach_node-1] [INFO] [1780724464.940413366] [error_estimator]: y_error: -0.092080
+[approach_node-1] [INFO] [1780724464.940417413] [error_estimator]: theta_error: 0.122173
+[approach_node-1] [INFO] [1780724465.520499896] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724465.557944720] [approach_node]: Target selector waiting: state=LOST lost=6 reason=no candidate passed lock gate
+[approach_node-1] [INFO] [1780724466.083740093] [approach_node]: Target locked: cluster=0 hit_base=(0.453, 0.000) hit_odom=(2.311, 2.916) yaw=0.122 len=0.744 area=0.304 fill=0.871 target_support=0.109 init_dist=0.150
+[approach_node-1] [INFO] [1780724466.083822131] [error_estimator]: x_error: 0.149608
+[approach_node-1] [INFO] [1780724466.083826372] [error_estimator]: y_error: -0.055205
+[approach_node-1] [INFO] [1780724466.083829317] [error_estimator]: theta_error: 0.122173
+[approach_node-1] [WARN] [1780724466.513284025] [approach_node]: Stale lidar cloud (0.31s > 0.30s), skip concat
+[approach_node-1] [WARN] [1780724466.643759565] [approach_node]: Target selector waiting: state=LOST lost=4 reason=no valid candidates
+[approach_node-1] [INFO] [1780724467.080530120] [error_estimator]: x_error: 0.143697
+[approach_node-1] [INFO] [1780724467.080567222] [error_estimator]: y_error: -0.058522
+[approach_node-1] [INFO] [1780724467.080570602] [error_estimator]: theta_error: 0.122174
+[approach_node-1] [INFO] [1780724467.620497518] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724467.647353268] [approach_node]: Target selector waiting: state=LOST lost=5 reason=no valid candidates
+[approach_node-1] [INFO] [1780724468.359966032] [approach_node]: Target locked: cluster=0 hit_base=(0.441, 0.000) hit_odom=(2.309, 2.910) yaw=0.105 len=0.759 area=0.318 fill=0.879 target_support=0.116 init_dist=0.139
+[approach_node-1] [INFO] [1780724468.360050384] [error_estimator]: x_error: 0.138539
+[approach_node-1] [INFO] [1780724468.360054412] [error_estimator]: y_error: -0.046093
+[approach_node-1] [INFO] [1780724468.360057264] [error_estimator]: theta_error: 0.104721
+[approach_node-1] [WARN] [1780724468.607577622] [approach_node]: Stale lidar cloud (0.31s > 0.30s), skip concat
+[approach_node-1] [WARN] [1780724468.737613452] [approach_node]: Target selector waiting: state=LOST lost=1 reason=relocking 1/3
+[approach_node-1] [INFO] [1780724469.720494500] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724469.782255742] [approach_node]: Target selector waiting: state=ACQUIRE lost=8 reason=acquiring 2/3
+[approach_node-1] [INFO] [1780724469.878374475] [approach_node]: Target locked: cluster=0 hit_base=(0.431, 0.000) hit_odom=(2.306, 2.904) yaw=0.087 len=0.790 area=0.333 fill=0.854 target_support=0.116 init_dist=0.129
+[approach_node-1] [INFO] [1780724469.878452345] [error_estimator]: x_error: 0.128874
+[approach_node-1] [INFO] [1780724469.878456984] [error_estimator]: y_error: -0.037522
+[approach_node-1] [INFO] [1780724469.878459790] [error_estimator]: theta_error: 0.087266
+[approach_node-1] [WARN] [1780724470.701565606] [approach_node]: Stale lidar cloud (0.30s > 0.30s), skip concat
+[approach_node-1] [WARN] [1780724470.891375373] [approach_node]: Target selector waiting: state=LOST lost=5 reason=no valid candidates
+[approach_node-1] [INFO] [1780724471.274691570] [error_estimator]: x_error: 0.115502
+[approach_node-1] [INFO] [1780724471.274731264] [error_estimator]: y_error: -0.045743
+[approach_node-1] [INFO] [1780724471.274734727] [error_estimator]: theta_error: 0.087266
+[approach_node-1] [INFO] [1780724471.720498728] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724471.992158886] [approach_node]: Target selector waiting: state=LOST lost=6 reason=no candidate passed lock gate
+[approach_node-1] [INFO] [1780724472.468425511] [approach_node]: Target locked: cluster=0 hit_base=(0.410, 0.000) hit_odom=(2.300, 2.894) yaw=0.052 len=0.736 area=0.318 fill=0.912 target_support=0.085 init_dist=0.110
+[approach_node-1] [INFO] [1780724472.468505901] [error_estimator]: x_error: 0.109658
+[approach_node-1] [INFO] [1780724472.468510188] [error_estimator]: y_error: -0.021469
+[approach_node-1] [INFO] [1780724472.468512826] [error_estimator]: theta_error: 0.052360
+[approach_node-1] [WARN] [1780724472.717931385] [approach_node]: Stale lidar cloud (0.32s > 0.30s), skip concat
+[approach_node-1] [WARN] [1780724473.092603167] [approach_node]: Target selector waiting: state=LOST lost=3 reason=no valid candidates
+[approach_node-1] [INFO] [1780724473.476112730] [error_estimator]: x_error: 0.103499
+[approach_node-1] [INFO] [1780724473.476149703] [error_estimator]: y_error: -0.019176
+[approach_node-1] [INFO] [1780724473.476153156] [error_estimator]: theta_error: 0.034908
+[approach_node-1] [INFO] [1780724473.820492255] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724474.145668280] [approach_node]: Target selector waiting: state=LOST lost=5 reason=no candidate passed lock gate
+[approach_node-1] [WARN] [1780724474.737529143] [approach_node]: Stale lidar cloud (0.34s > 0.30s), skip concat
+[approach_node-1] [INFO] [1780724474.776586355] [approach_node]: Target locked: cluster=0 hit_base=(0.402, 0.000) hit_odom=(2.294, 2.891) yaw=0.035 len=0.733 area=0.318 fill=0.921 target_support=0.084 init_dist=0.102
+[approach_node-1] [INFO] [1780724474.776653707] [error_estimator]: x_error: 0.101518
+[approach_node-1] [INFO] [1780724474.776658522] [error_estimator]: y_error: -0.014021
+[approach_node-1] [INFO] [1780724474.776661281] [error_estimator]: theta_error: 0.034907
+[approach_node-1] [WARN] [1780724475.159887534] [approach_node]: Target selector waiting: state=LOST lost=1 reason=relocking 1/3
+[approach_node-1] [INFO] [1780724475.351894511] [error_estimator]: x_error: 0.101606
+[approach_node-1] [INFO] [1780724475.351928196] [error_estimator]: y_error: -0.014349
+[approach_node-1] [INFO] [1780724475.351931520] [error_estimator]: theta_error: 0.034908
+[approach_node-1] [INFO] [1780724475.820494084] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724476.175305157] [approach_node]: Target selector waiting: state=ACQUIRE lost=8 reason=no candidate passed lock gate
+[approach_node-1] [INFO] [1780724476.462539036] [approach_node]: Target locked: cluster=0 hit_base=(0.827, 0.000) hit_odom=(1.923, 3.117) yaw=0.017 len=0.732 area=0.329 fill=0.929 target_support=0.077 init_dist=0.527
+[approach_node-1] [INFO] [1780724476.462612443] [error_estimator]: x_error: 0.526561
+[approach_node-1] [INFO] [1780724476.462616369] [error_estimator]: y_error: -0.014428
+[approach_node-1] [INFO] [1780724476.462618832] [error_estimator]: theta_error: 0.017453
+[approach_node-1] [WARN] [1780724476.801218808] [approach_node]: Stale lidar cloud (0.30s > 0.30s), skip concat
+[approach_node-1] [INFO] [1780724477.092323682] [error_estimator]: x_error: 0.525860
+[approach_node-1] [INFO] [1780724477.092358182] [error_estimator]: y_error: -0.014414
+[approach_node-1] [INFO] [1780724477.092361756] [error_estimator]: theta_error: 0.017453
+[approach_node-1] [WARN] [1780724477.187986851] [approach_node]: Target selector waiting: state=LOST lost=1 reason=no valid candidates
+[approach_node-1] [INFO] [1780724477.674263981] [error_estimator]: x_error: 0.529358
+[approach_node-1] [INFO] [1780724477.674299879] [error_estimator]: y_error: -0.014825
+[approach_node-1] [INFO] [1780724477.674303555] [error_estimator]: theta_error: 0.017453
+[approach_node-1] [INFO] [1780724477.920497864] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724478.263720673] [approach_node]: Target selector waiting: state=LOST lost=6 reason=no valid candidates
+[approach_node-1] [INFO] [1780724478.757781155] [approach_node]: Target locked: cluster=0 hit_base=(0.357, 0.000) hit_odom=(2.299, 2.884) yaw=0.052 len=0.735 area=0.375 fill=0.900 target_support=0.082 init_dist=0.057
+[approach_node-1] [INFO] [1780724478.757859508] [error_estimator]: x_error: 0.056994
+[approach_node-1] [INFO] [1780724478.757863971] [error_estimator]: y_error: -0.018710
+[approach_node-1] [INFO] [1780724478.757866499] [error_estimator]: theta_error: 0.052361
+[approach_node-1] [WARN] [1780724478.814392588] [approach_node]: Stale lidar cloud (0.31s > 0.30s), skip concat
+[approach_node-1] [INFO] [1780724479.341875212] [error_estimator]: x_error: 0.061626
+[approach_node-1] [INFO] [1780724479.341912295] [error_estimator]: y_error: -0.019116
+[approach_node-1] [INFO] [1780724479.341915981] [error_estimator]: theta_error: 0.052361
+[approach_node-1] [WARN] [1780724479.483567451] [approach_node]: Target selector waiting: state=LOST lost=1 reason=no candidate passed lock gate
+[approach_node-1] [INFO] [1780724480.020487109] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724480.609768729] [approach_node]: Target selector waiting: state=LOST lost=7 reason=no candidate passed lock gate
+[approach_node-1] [WARN] [1780724480.873927131] [approach_node]: Stale lidar cloud (1.07s > 0.30s), skip concat
+[approach_node-1] [INFO] [1780724481.598984904] [approach_node]: Target locked: cluster=0 hit_base=(0.371, 0.000) hit_odom=(2.276, 2.889) yaw=0.035 len=0.736 area=0.967 fill=0.935 target_support=0.025 init_dist=0.071
+[approach_node-1] [INFO] [1780724481.599066932] [error_estimator]: x_error: 0.070783
+[approach_node-1] [INFO] [1780724481.599071617] [error_estimator]: y_error: -0.012948
+[approach_node-1] [INFO] [1780724481.599074376] [error_estimator]: theta_error: 0.034907
+[approach_node-1] [WARN] [1780724481.780178910] [approach_node]: Target selector waiting: state=LOST lost=1 reason=no valid candidates
+[approach_node-1] [INFO] [1780724482.020488595] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724482.924839246] [approach_node]: Target selector waiting: state=LOST lost=6 reason=no valid candidates
+[approach_node-1] [WARN] [1780724482.993317434] [approach_node]: Stale lidar cloud (1.09s > 0.30s), skip concat
+[approach_node-1] [WARN] [1780724483.940791251] [approach_node]: Target selector waiting: state=ACQUIRE lost=9 reason=no valid candidates
+[approach_node-1] [INFO] [1780724484.120550264] [approach_node]: Executing approach
+[approach_node-1] [INFO] [1780724484.139170079] [approach_node]: Target locked: cluster=0 hit_base=(0.350, 0.000) hit_odom=(2.292, 2.879) yaw=0.017 len=0.739 area=0.958 fill=0.919 target_support=0.023 init_dist=0.050
+[approach_node-1] [INFO] [1780724484.139249034] [error_estimator]: x_error: 0.050014
+[approach_node-1] [INFO] [1780724484.139253561] [error_estimator]: y_error: -0.006110
+[approach_node-1] [INFO] [1780724484.139256441] [error_estimator]: theta_error: 0.017454
+[approach_node-1] [WARN] [1780724484.960080980] [approach_node]: Target selector waiting: state=LOST lost=4 reason=no valid candidates
+[approach_node-1] [WARN] [1780724485.029932663] [approach_node]: Stale lidar cloud (1.13s > 0.30s), skip concat
+[approach_node-1] [INFO] [1780724485.590209203] [error_estimator]: x_error: 0.049642
+[approach_node-1] [INFO] [1780724485.590250407] [error_estimator]: y_error: -0.006806
+[approach_node-1] [INFO] [1780724485.590254037] [error_estimator]: theta_error: 0.017454
+[approach_node-1] [WARN] [1780724485.996228192] [approach_node]: Target selector waiting: state=LOST lost=2 reason=no valid candidates
+[approach_node-1] [INFO] [1780724486.220492892] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724487.058615974] [approach_node]: Target selector waiting: state=LOST lost=7 reason=no valid candidates
+[approach_node-1] [WARN] [1780724487.128340518] [approach_node]: Stale lidar cloud (1.13s > 0.30s), skip concat
+[approach_node-1] [INFO] [1780724487.896328699] [approach_node]: Target locked: cluster=0 hit_base=(0.347, 0.000) hit_odom=(2.290, 2.879) yaw=0.017 len=0.736 area=0.975 fill=0.932 target_support=0.037 init_dist=0.047
+[approach_node-1] [INFO] [1780724487.896412580] [error_estimator]: x_error: 0.047192
+[approach_node-1] [INFO] [1780724487.896417173] [error_estimator]: y_error: -0.006061
+[approach_node-1] [INFO] [1780724487.896419960] [error_estimator]: theta_error: 0.017454
+[approach_node-1] [WARN] [1780724488.111153797] [approach_node]: Target selector waiting: state=LOST lost=1 reason=no valid candidates
+[approach_node-1] [INFO] [1780724488.320492569] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724489.186991603] [approach_node]: Target selector waiting: state=LOST lost=6 reason=no valid candidates
+[approach_node-1] [WARN] [1780724489.255976900] [approach_node]: Stale lidar cloud (1.16s > 0.30s), skip concat
+[approach_node-1] [INFO] [1780724490.266021680] [approach_node]: Target locked: cluster=0 hit_base=(0.344, 0.000) hit_odom=(2.291, 2.877) yaw=0.017 len=0.734 area=0.970 fill=0.934 target_support=0.028 init_dist=0.044
+[approach_node-1] [INFO] [1780724490.271191383] [error_estimator]: x_error: 0.043860
+[approach_node-1] [INFO] [1780724490.271207254] [error_estimator]: y_error: -0.006002
+[approach_node-1] [INFO] [1780724490.271210374] [error_estimator]: theta_error: 0.017453
+[approach_node-1] [INFO] [1780724490.420493521] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724490.706271862] [approach_node]: Target selector waiting: state=LOST lost=1 reason=no valid candidates
+[approach_node-1] [WARN] [1780724491.430574567] [approach_node]: Stale lidar cloud (1.13s > 0.30s), skip concat
+[approach_node-1] [WARN] [1780724491.787044824] [approach_node]: Target selector waiting: state=LOST lost=5 reason=no valid candidates
+[approach_node-1] [INFO] [1780724492.420494646] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724492.880983975] [approach_node]: Target selector waiting: state=ACQUIRE lost=8 reason=acquiring 2/3
+[approach_node-1] [INFO] [1780724493.088422132] [approach_node]: Target locked: cluster=0 hit_base=(0.338, 0.000) hit_odom=(2.292, 2.875) yaw=0.017 len=0.741 area=0.977 fill=0.934 target_support=0.032 init_dist=0.038
+[approach_node-1] [INFO] [1780724493.088503910] [error_estimator]: x_error: 0.037679
+[approach_node-1] [INFO] [1780724493.088508420] [error_estimator]: y_error: -0.005895
+[approach_node-1] [INFO] [1780724493.088511392] [error_estimator]: theta_error: 0.017454
+[approach_node-1] [WARN] [1780724493.591607746] [approach_node]: Stale lidar cloud (1.09s > 0.30s), skip concat
+[approach_node-1] [WARN] [1780724493.943493376] [approach_node]: Target selector waiting: state=LOST lost=4 reason=no valid candidates
+[approach_node-1] [INFO] [1780724494.420498451] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724494.986264574] [approach_node]: Target selector waiting: state=ACQUIRE lost=9 reason=no valid candidates
+[approach_node-1] [INFO] [1780724495.632900475] [approach_node]: Target locked: cluster=0 hit_base=(0.334, 0.000) hit_odom=(2.293, 2.874) yaw=0.017 len=0.740 area=0.984 fill=0.920 target_support=0.031 init_dist=0.034
+[approach_node-1] [INFO] [1780724495.637995845] [error_estimator]: x_error: 0.034231
+[approach_node-1] [INFO] [1780724495.638009345] [error_estimator]: y_error: -0.005834
+[approach_node-1] [INFO] [1780724495.638012743] [error_estimator]: theta_error: 0.017453
+[approach_node-1] [WARN] [1780724495.707061071] [approach_node]: Stale lidar cloud (1.11s > 0.30s), skip concat
+[approach_node-1] [WARN] [1780724496.068549011] [approach_node]: Target selector waiting: state=LOST lost=1 reason=relocking 1/3
+[approach_node-1] [INFO] [1780724496.420501108] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724497.128955520] [approach_node]: Target selector waiting: state=LOST lost=5 reason=no valid candidates
+[approach_node-1] [INFO] [1780724497.345365912] [error_estimator]: x_error: 0.032887
+[approach_node-1] [INFO] [1780724497.345403356] [error_estimator]: y_error: -0.000629
+[approach_node-1] [INFO] [1780724497.345407079] [error_estimator]: theta_error: -0.000005
+[approach_node-1] [WARN] [1780724497.860590209] [approach_node]: Stale lidar cloud (1.16s > 0.30s), skip concat
+[approach_node-1] [WARN] [1780724498.227133739] [approach_node]: Target selector waiting: state=LOST lost=4 reason=no valid candidates
+[approach_node-1] [INFO] [1780724498.421610450] [approach_node]: Executing approach
+[approach_node-1] [WARN] [1780724499.330531979] [approach_node]: Target selector waiting: state=ACQUIRE lost=8 reason=no valid candidates
+[approach_node-1] [INFO] [1780724499.978405869] [approach_node]: Target locked: cluster=0 hit_base=(0.327, 0.000) hit_odom=(2.296, 2.871) yaw=-0.017 len=0.737 area=0.978 fill=0.929 target_support=0.025 init_dist=0.027
+[approach_node-1] [INFO] [1780724499.983577906] [error_estimator]: x_error: 0.027208
+[approach_node-1] [INFO] [1780724499.983590869] [error_estimator]: y_error: 0.005711
+[approach_node-1] [INFO] [1780724499.983593536] [error_estimator]: theta_error: -0.017452
+[approach_node-1] [INFO] [1780724499.983607268] [approach_node]: APPROACH → DWELL (ex=0.027, eth=0.017)
+[approach_node-1] [WARN] [1780724500.053249042] [approach_node]: Stale lidar cloud (1.15s > 0.30s), skip concat
+[approach_node-1] [INFO] [1780724500.520490563] [approach_node]: Executing approach
+[approach_node-1] [INFO] [1780724500.648715993] [error_estimator]: x_error: 0.029948
+[approach_node-1] [INFO] [1780724500.648754326] [error_estimator]: y_error: 0.000077
+[approach_node-1] [INFO] [1780724500.648758243] [error_estimator]: theta_error: -0.000005
+[approach_node-1] [WARN] [1780724501.304375456] [approach_node]: Target selector waiting: state=LOST lost=1 reason=no valid candidates
+[approach_node-1] [INFO] [1780724502.189783782] [error_estimator]: x_error: 0.029132
+[approach_node-1] [INFO] [1780724502.189815339] [error_estimator]: y_error: -0.005115
+[approach_node-1] [INFO] [1780724502.189818821] [error_estimator]: theta_error: 0.017453
+[approach_node-1] [WARN] [1780724502.259918263] [approach_node]: Stale lidar cloud (1.16s > 0.30s), skip concat
+[approach_node-1] [INFO] [1780724502.420485597] [approach_node]: Approach goal succeeded
+[approach_node-1] [INFO] [1780724502.420739116] [approach_node]: Published approach trail: 18 poses

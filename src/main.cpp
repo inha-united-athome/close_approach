@@ -9,10 +9,15 @@
 #include <sstream>
 #include <utility>
 
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
+#include <vector>
 
 #include <pcl/io/pcd_io.h>
+#include <pcl/search/kdtree.h>
+#include <pcl/segmentation/extract_clusters.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/utils.h>
@@ -21,6 +26,12 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 using Ms = std::chrono::duration<double, std::milli>;
+
+struct DebugColor {
+  std::uint8_t r;
+  std::uint8_t g;
+  std::uint8_t b;
+};
 
 double elapsed_ms(const Clock::time_point &from) {
   return std::chrono::duration_cast<Ms>(Clock::now() - from).count();
@@ -81,6 +92,76 @@ Eigen::Affine2f transformToAffine2D(
   return affine;
 }
 
+DebugColor debugPaletteColor(std::size_t idx) {
+  static const std::array<DebugColor, 8> colors = {
+      DebugColor{200, 200, 200}, DebugColor{120, 180, 255},
+      DebugColor{255, 180, 100}, DebugColor{180, 255, 120},
+      DebugColor{255, 120, 200}, DebugColor{120, 255, 220},
+      DebugColor{220, 160, 255}, DebugColor{255, 240, 120}};
+  return colors[idx % colors.size()];
+}
+
+void addDebugPoint(pcl::PointCloud<pcl::PointXYZRGB> &cloud,
+                   const Eigen::Vector2f &p, float z,
+                   const DebugColor &color) {
+  pcl::PointXYZRGB pt;
+  pt.x = p.x();
+  pt.y = p.y();
+  pt.z = z;
+  pt.r = color.r;
+  pt.g = color.g;
+  pt.b = color.b;
+  cloud.points.push_back(pt);
+}
+
+void addDebugSegment(pcl::PointCloud<pcl::PointXYZRGB> &cloud,
+                     const Eigen::Vector2f &a, const Eigen::Vector2f &b,
+                     float z, const DebugColor &color, int samples = 80) {
+  for (int i = 0; i <= samples; ++i) {
+    const float t = static_cast<float>(i) / static_cast<float>(samples);
+    addDebugPoint(cloud, a + t * (b - a), z, color);
+  }
+}
+
+void addDebugCross(pcl::PointCloud<pcl::PointXYZRGB> &cloud,
+                   const Eigen::Vector2f &p, float z,
+                   const DebugColor &color, float size = 0.04F) {
+  addDebugSegment(cloud, p + Eigen::Vector2f(-size, 0.0F),
+                  p + Eigen::Vector2f(size, 0.0F), z, color, 16);
+  addDebugSegment(cloud, p + Eigen::Vector2f(0.0F, -size),
+                  p + Eigen::Vector2f(0.0F, size), z, color, 16);
+}
+
+void addDebugObb(pcl::PointCloud<pcl::PointXYZRGB> &cloud, const OBB &obb,
+                 float z, const DebugColor &color) {
+  const Eigen::Vector2f p1 =
+      obb.center + (obb.length1 * 0.5F) * obb.axis1 +
+      (obb.length2 * 0.5F) * obb.axis2;
+  const Eigen::Vector2f p2 =
+      obb.center - (obb.length1 * 0.5F) * obb.axis1 +
+      (obb.length2 * 0.5F) * obb.axis2;
+  const Eigen::Vector2f p3 =
+      obb.center - (obb.length1 * 0.5F) * obb.axis1 -
+      (obb.length2 * 0.5F) * obb.axis2;
+  const Eigen::Vector2f p4 =
+      obb.center + (obb.length1 * 0.5F) * obb.axis1 -
+      (obb.length2 * 0.5F) * obb.axis2;
+  addDebugSegment(cloud, p1, p2, z, color, 60);
+  addDebugSegment(cloud, p2, p3, z, color, 60);
+  addDebugSegment(cloud, p3, p4, z, color, 60);
+  addDebugSegment(cloud, p4, p1, z, color, 60);
+}
+
+void addDebugAxes(pcl::PointCloud<pcl::PointXYZRGB> &cloud, float z,
+                  float length) {
+  const Eigen::Vector2f origin(0.0F, 0.0F);
+  addDebugSegment(cloud, origin, Eigen::Vector2f(length, 0.0F), z,
+                  {255, 0, 0}, 120);
+  addDebugSegment(cloud, origin, Eigen::Vector2f(0.0F, length), z + 0.02F,
+                  {0, 255, 0}, 120);
+  addDebugCross(cloud, origin, z + 0.04F, {255, 255, 255}, 0.05F);
+}
+
 } // namespace
 
 ApproachNode::ApproachNode()
@@ -91,11 +172,15 @@ ApproachNode::ApproachNode()
 
   this->declare_parameter<bool>("debug", true);
   this->declare_parameter<double>("debug_save_period_sec", 1.0);
+  this->declare_parameter<std::string>("debug_output_dir",
+                                       "/home/thor/inha_logs/module/close_approach");
   this->get_parameter("debug", debug_enabled_);
   this->get_parameter("debug_save_period_sec", debug_save_period_sec_);
+  std::string debug_output_dir;
+  this->get_parameter("debug_output_dir", debug_output_dir);
+  debug_output_dir_ = debug_output_dir;
 
   if (debug_enabled_) {
-    debug_output_dir_ = "/home/thor/inha_logs/module/close_approach";
     std::filesystem::create_directories(debug_output_dir_);
     RCLCPP_INFO(this->get_logger(), "Debug files will be saved to %s",
                 debug_output_dir_.c_str());
@@ -526,7 +611,7 @@ void ApproachNode::pointCloudCallback(
   filtered_cloud_msg.header.stamp = this->now();
   filtered_cloud_msg.header.frame_id = target_frame_;
   debugging_pointcloud_publisher_->publish(filtered_cloud_msg);
-  saveDebugCloud(cloud, "roi_filtered");
+  auto debug_roi_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>(*cloud);
 
   const auto t3 = Clock::now();
   geometry_msgs::msg::TransformStamped base_to_odom_tf;
@@ -546,6 +631,7 @@ void ApproachNode::pointCloudCallback(
   const double t_cluster = elapsed_ms(t3);
 
   if (!target_valid) {
+    saveDebugOverlay(debug_roi_cloud, &selection);
     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
                          "Target selector waiting: state=%s lost=%d reason=%s",
                          selection.state.c_str(), selection.lost_count,
@@ -556,14 +642,12 @@ void ApproachNode::pointCloudCallback(
   }
 
   cloud = selection.selected_cloud;
-  saveDebugCloud(cloud, "clustered");
   publish3Dpointcloud(cloud);
 
   const auto t4 = Clock::now();
   auto final_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>(*cloud);
   roi_filter_->projection_filter(final_cloud);
   const double t_proj = elapsed_ms(t4);
-  saveDebugCloud(final_cloud, "final");
 
   const auto t5 = Clock::now();
   obb = selection.obb;
@@ -590,6 +674,7 @@ void ApproachNode::pointCloudCallback(
   }
 
   publishTargetEdge(target_edge);
+  saveDebugOverlay(debug_roi_cloud, &selection);
 
   // error estimator => SE(2) error 측정
   SE2Error candidate =
@@ -955,12 +1040,14 @@ void ApproachNode::publishTargetEdge(const TargetEdge &target_edge) {
   target_edge_publisher_->publish(marker);
 }
 
-void ApproachNode::saveDebugCloud(
-    const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, const std::string &stage) {
-  if (!debug_enabled_ || !cloud || cloud->empty()) {
+void ApproachNode::saveDebugOverlay(
+    const pcl::PointCloud<pcl::PointXYZ>::Ptr &roi_cloud,
+    const TargetSelectorResult *selection) {
+  if (!debug_enabled_ || !roi_cloud || roi_cloud->empty()) {
     return;
   }
 
+  const std::string stage = "debug_overlay";
   const auto now = Clock::now();
   const auto last_save = last_debug_save_time_by_stage_.find(stage);
   if (last_save != last_debug_save_time_by_stage_.end() &&
@@ -970,6 +1057,94 @@ void ApproachNode::saveDebugCloud(
   }
   last_debug_save_time_by_stage_[stage] = now;
 
+  pcl::PointCloud<pcl::PointXYZRGB> overlay;
+  overlay.points.reserve(roi_cloud->points.size() + 600);
+
+  std::vector<bool> assigned(roi_cloud->points.size(), false);
+  auto tree = std::make_shared<pcl::search::KdTree<pcl::PointXYZ>>();
+  tree->setInputCloud(roi_cloud);
+
+  pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
+  ec.setClusterTolerance(cluster_tolerance_);
+  ec.setMinClusterSize(min_cluster_size_);
+  ec.setMaxClusterSize(max_cluster_size_);
+  ec.setSearchMethod(tree);
+  ec.setInputCloud(roi_cloud);
+
+  std::vector<pcl::PointIndices> cluster_indices;
+  ec.extract(cluster_indices);
+
+  for (std::size_t cluster_idx = 0; cluster_idx < cluster_indices.size();
+       ++cluster_idx) {
+    const DebugColor color = debugPaletteColor(cluster_idx);
+    for (const int point_idx : cluster_indices[cluster_idx].indices) {
+      if (point_idx < 0 ||
+          static_cast<std::size_t>(point_idx) >= roi_cloud->points.size()) {
+        continue;
+      }
+      assigned[static_cast<std::size_t>(point_idx)] = true;
+      const auto &src = roi_cloud->points[point_idx];
+      pcl::PointXYZRGB pt;
+      pt.x = src.x;
+      pt.y = src.y;
+      pt.z = src.z;
+      pt.r = color.r;
+      pt.g = color.g;
+      pt.b = color.b;
+      overlay.points.push_back(pt);
+    }
+  }
+
+  for (std::size_t i = 0; i < roi_cloud->points.size(); ++i) {
+    if (assigned[i]) {
+      continue;
+    }
+    const auto &src = roi_cloud->points[i];
+    pcl::PointXYZRGB pt;
+    pt.x = src.x;
+    pt.y = src.y;
+    pt.z = src.z;
+    pt.r = 90;
+    pt.g = 90;
+    pt.b = 90;
+    overlay.points.push_back(pt);
+  }
+
+  const float marker_z = ground_height_ + 0.06F;
+  addDebugAxes(overlay, marker_z + 0.10F, 1.2F);
+
+  if (selection && selection->valid) {
+    addDebugObb(overlay, selection->obb, marker_z, {0, 255, 0});
+
+    const TargetEdge &edge = selection->edge;
+    const Eigen::Vector2f edge_a =
+        edge.target_center + edge.target_axis * (edge.target_length * 0.5F);
+    const Eigen::Vector2f edge_b =
+        edge.target_center - edge.target_axis * (edge.target_length * 0.5F);
+    addDebugSegment(overlay, edge_a, edge_b, marker_z + 0.04F,
+                    {0, 220, 255}, 120);
+    addDebugCross(overlay, selection->anchor_base, marker_z + 0.08F,
+                  {255, 0, 0}, 0.045F);
+    addDebugCross(overlay, selection->hit_base, marker_z + 0.10F,
+                  {255, 255, 255}, 0.04F);
+    addDebugSegment(overlay, selection->anchor_base, selection->hit_base,
+                    marker_z + 0.09F, {255, 0, 0}, 80);
+
+    const Eigen::Vector2f standoff_point =
+        edge.target_center - edge.normal_axis * target_standoff_distance_;
+    addDebugSegment(overlay, edge.target_center, standoff_point,
+                    marker_z + 0.06F, {255, 128, 0}, 80);
+    addDebugCross(overlay, standoff_point, marker_z + 0.09F,
+                  {255, 128, 0}, 0.035F);
+  }
+
+  if (overlay.points.empty()) {
+    return;
+  }
+  overlay.width = static_cast<std::uint32_t>(overlay.points.size());
+  overlay.height = 1;
+  overlay.is_dense = false;
+
   std::ostringstream filename;
   filename << currentTimeForFilename() << "_" << std::setw(6)
            << std::setfill('0') << debug_cloud_index_ << "_" << stage
@@ -978,13 +1153,13 @@ void ApproachNode::saveDebugCloud(
   const auto &output_dir =
       debug_action_output_dir_.empty() ? debug_output_dir_ : debug_action_output_dir_;
   const auto file_path = output_dir / filename.str();
-  const int result = pcl::io::savePCDFileBinary(file_path.string(), *cloud);
+  const int result = pcl::io::savePCDFileBinary(file_path.string(), overlay);
   if (result == 0) {
     ++debug_cloud_index_;
-    RCLCPP_DEBUG(this->get_logger(), "Saved debug cloud: %s",
+    RCLCPP_DEBUG(this->get_logger(), "Saved debug overlay: %s",
                  file_path.c_str());
   } else {
-    RCLCPP_WARN(this->get_logger(), "Failed to save debug cloud: %s",
+    RCLCPP_WARN(this->get_logger(), "Failed to save debug overlay: %s",
                 file_path.c_str());
   }
 }

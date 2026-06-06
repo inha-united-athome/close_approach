@@ -69,6 +69,7 @@ struct TargetSelectorResult {
   OBB obb;
   TargetEdge edge;
   TargetFitMetrics metrics;
+  Eigen::Vector2f anchor_base{0.0F, 0.0F};
   Eigen::Vector2f hit_base{0.0F, 0.0F};
   Eigen::Vector2f hit_odom{0.0F, 0.0F};
   float area = 0.0F;

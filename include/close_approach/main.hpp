@@ -220,8 +220,8 @@ private:
                     const Eigen::Vector2f &axis2, const float length1,
                     const float length2);
   void publishTargetEdge(const TargetEdge &target_edge);
-  void saveDebugCloud(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
-                      const std::string &stage);
+  void saveDebugOverlay(const pcl::PointCloud<pcl::PointXYZ>::Ptr &roi_cloud,
+                        const TargetSelectorResult *selection);
   void openDebugActionDirectory();
   void openMeasureLog();
   void closeMeasureLog();

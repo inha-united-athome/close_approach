@@ -2,6 +2,7 @@ approach_node:
   ros__parameters:
     debug: true
     debug_save_period_sec: 1.0
+    debug_output_dir: /home/thor/inha_log/module/close_approach
 
     pointcloud_topic_name: /camera/camera_head/depth/color/points
     lidar_topic_name: /livox/lidar
@@ -10,7 +11,7 @@ approach_node:
     odom_frame: odom
 
     roi_x_min: 0.1
-    roi_x_max: 2.0
+    roi_x_max: 5.0
     roi_y_abs_max: 0.8
     roi_z_max: 1.5
 

@@ -389,6 +389,7 @@ bool TargetSelector::select(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
   }
 
   const Eigen::Vector2f anchor_base = currentAnchorBase(base_to_odom);
+  result.anchor_base = anchor_base;
   const auto candidates = extractCandidates(cloud, anchor_base, base_to_odom);
   if (candidates.empty()) {
     ++lost_count_;

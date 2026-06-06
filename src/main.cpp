@@ -255,6 +255,9 @@ ApproachNode::ApproachNode()
   this->declare_parameter<float>("target_selector.ray_segment_tolerance", 0.03F);
   this->declare_parameter<float>("target_selector.min_target_edge_support", 0.02F);
   this->declare_parameter<float>("target_selector.min_fill_ratio", 0.50F);
+  this->declare_parameter<float>("target_selector.circle_rmse_threshold", 0.04F);
+  this->declare_parameter<float>("target_selector.circle_min_radius", 0.15F);
+  this->declare_parameter<float>("target_selector.circle_max_radius", 0.8F);
   this->declare_parameter<int>("target_selector.acquire_confirm_frames", 3);
   this->declare_parameter<int>("target_selector.relock_confirm_frames", 3);
   this->declare_parameter<int>("target_selector.max_lost_frames", 8);
@@ -332,6 +335,12 @@ ApproachNode::ApproachNode()
                       target_selector_params_.min_target_edge_support_ratio);
   this->get_parameter("target_selector.min_fill_ratio",
                       target_selector_params_.min_fill_ratio);
+  this->get_parameter("target_selector.circle_rmse_threshold",
+                      target_selector_params_.circle_rmse_threshold);
+  this->get_parameter("target_selector.circle_min_radius",
+                      target_selector_params_.circle_min_radius);
+  this->get_parameter("target_selector.circle_max_radius",
+                      target_selector_params_.circle_max_radius);
   this->get_parameter("target_selector.acquire_confirm_frames",
                       target_selector_params_.acquire_confirm_frames);
   this->get_parameter("target_selector.relock_confirm_frames",
@@ -661,9 +670,10 @@ void ApproachNode::pointCloudCallback(
         std::abs(target_edge.target_center.dot(target_edge.normal_axis) -
                  target_standoff_distance_);
     RCLCPP_INFO(this->get_logger(),
-                "Target locked: cluster=%zu hit_base=(%.3f, %.3f) "
+                "Target locked (%s): cluster=%zu hit_base=(%.3f, %.3f) "
                 "hit_odom=(%.3f, %.3f) yaw=%.3f len=%.3f area=%.3f "
                 "fill=%.3f target_support=%.3f init_dist=%.3f",
+                selection.is_round ? "ROUND" : "L-SHAPE",
                 selection.cluster_id, selection.hit_base.x(),
                 selection.hit_base.y(), selection.hit_odom.x(),
                 selection.hit_odom.y(),

@@ -324,6 +324,71 @@ std::string stateName(TargetSelector::TrackState state) {
 }
 */
 
+struct CircleFit {
+  bool valid = false;
+  Eigen::Vector2f center{0.0F, 0.0F};
+  float radius = 0.0F;
+  float rmse = 0.0F;
+};
+
+CircleFit fitCircle(const std::vector<Eigen::Vector2f>& points, float min_radius, float max_radius) {
+  CircleFit result;
+  if (points.size() < 3) {
+    return result;
+  }
+
+  Eigen::MatrixXf M(points.size(), 3);
+  Eigen::VectorXf Y(points.size());
+  for (std::size_t i = 0; i < points.size(); ++i) {
+    M(i, 0) = points[i].x();
+    M(i, 1) = points[i].y();
+    M(i, 2) = 1.0F;
+    Y(i) = points[i].squaredNorm();
+  }
+
+  Eigen::Vector3f X = M.colPivHouseholderQr().solve(Y);
+  float A = X(0);
+  float B = X(1);
+  float C = X(2);
+
+  result.center.x() = A * 0.5F;
+  result.center.y() = B * 0.5F;
+  float r2 = C + result.center.squaredNorm();
+  if (r2 <= 0.0F) {
+    return result;
+  }
+  result.radius = std::sqrt(r2);
+
+  float sum_sq_error = 0.0F;
+  for (const auto& p : points) {
+    float d = (p - result.center).norm();
+    float err = d - result.radius;
+    sum_sq_error += err * err;
+  }
+  result.rmse = std::sqrt(sum_sq_error / static_cast<float>(points.size()));
+  result.valid = std::isfinite(result.rmse) && result.radius > min_radius && result.radius < max_radius;
+  return result;
+}
+
+TargetSelector::EdgeProjection intersectAnchorRayWithCircle(
+    const Eigen::Vector2f& center, float radius, const Eigen::Vector2f& anchor) {
+  TargetSelector::EdgeProjection projection;
+  float dy = center.y() - anchor.y();
+  float r2 = radius * radius;
+  float dy2 = dy * dy;
+  if (dy2 > r2) {
+    return projection; // No intersection
+  }
+
+  float dx = std::sqrt(r2 - dy2);
+  float x_hit = center.x() - dx;
+  projection.projected = Eigen::Vector2f(x_hit, anchor.y());
+  projection.ray_x = x_hit - anchor.x();
+  projection.segment_penalty = 0.0F;
+  projection.valid = std::isfinite(projection.ray_x) && projection.ray_x >= 0.0F;
+  return projection;
+}
+
 } // namespace
 
 void TargetSelector::setParameters(const TargetSelectorParams &params) {
@@ -479,6 +544,49 @@ TargetSelector::Candidate TargetSelector::makeCandidate(
   }
 
   const auto points = toPoints2D(cloud);
+
+  // 1. Perform 2D Least-squares circle fit (Secondary round classification)
+  CircleFit circle = fitCircle(points, params_.circle_min_radius, params_.circle_max_radius);
+  if (circle.valid && circle.rmse < params_.circle_rmse_threshold) {
+    EdgeProjection projection = intersectAnchorRayWithCircle(circle.center, circle.radius, anchor_base);
+    if (projection.valid) {
+      candidate.valid = true;
+      candidate.is_round = true;
+
+      // Setup OBB centered at circle center with diameter dimensions
+      candidate.obb.center = circle.center;
+      Eigen::Vector2f normal_axis = (circle.center - projection.projected).normalized();
+      Eigen::Vector2f lateral_axis(-normal_axis.y(), normal_axis.x());
+      candidate.obb.axis1 = normal_axis;
+      candidate.obb.axis2 = lateral_axis;
+      candidate.obb.length1 = 2.0F * circle.radius;
+      candidate.obb.length2 = 2.0F * circle.radius;
+
+      // Setup Edge
+      candidate.edge.target_center = projection.projected;
+      candidate.edge.normal_axis = normal_axis;
+      candidate.edge.target_axis = lateral_axis;
+      candidate.edge.target_length = 2.0F * circle.radius;
+
+      candidate.projection = projection;
+      candidate.hit_base = projection.projected;
+      candidate.hit_odom = base_to_odom * candidate.hit_base;
+      candidate.normal_odom = normalizedOr(base_to_odom.linear() * normal_axis, Eigen::Vector2f(1.0F, 0.0F));
+      candidate.yaw = std::atan2(candidate.normal_odom.y(), candidate.normal_odom.x());
+
+      // Fill metrics
+      candidate.metrics.rect_area = 4.0F * circle.radius * circle.radius;
+      candidate.metrics.hull_area = kPi * circle.radius * circle.radius;
+      candidate.metrics.fill_ratio = kPi / 4.0F;
+      candidate.metrics.mean_edge_dist = circle.rmse;
+      candidate.metrics.support_ratio = 1.0F;
+      candidate.metrics.target_edge_mean_dist = circle.rmse;
+      candidate.metrics.target_edge_support_ratio = 1.0F;
+
+      return candidate;
+    }
+  }
+
   const LShapeFit fit = fitLShape(points, anchor_base, params_);
   if (!fit.valid || fit.metrics.fill_ratio < params_.min_fill_ratio) {
     return candidate;
@@ -624,6 +732,7 @@ void TargetSelector::lockTo(const Candidate &candidate,
 void TargetSelector::fillResult(const Candidate &candidate,
                                 TargetSelectorResult &result) const {
   result.valid = candidate.valid;
+  result.is_round = candidate.is_round;
   result.cluster_id = candidate.cluster_id;
   result.selected_cloud = candidate.cloud;
   result.obb = candidate.obb;

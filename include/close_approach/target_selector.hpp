@@ -25,6 +25,10 @@ struct TargetSelectorParams {
   float min_target_edge_support_ratio = 0.02F;
   float min_fill_ratio = 0.50F;
 
+  float circle_rmse_threshold = 0.04F;
+  float circle_min_radius = 0.15F;
+  float circle_max_radius = 0.8F;
+
   int acquire_confirm_frames = 3;
   int relock_confirm_frames = 3;
   int max_lost_frames = 8;
@@ -60,6 +64,7 @@ struct TargetSelectorResult {
   bool valid = false;
   bool newly_locked = false;
   bool locked = false;
+  bool is_round = false;
   int lost_count = 0;
   std::string state;
   std::string reason;
@@ -106,6 +111,7 @@ public:
 private:
   struct Candidate {
     bool valid = false;
+    bool is_round = false;
     std::size_t cluster_id = 0;
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud;
     OBB obb;

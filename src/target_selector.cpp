@@ -312,6 +312,7 @@ float ratioCost(float value, float reference) {
   return std::abs(std::log(value / reference));
 }
 
+/*
 std::string stateName(TargetSelector::TrackState state) {
   if (state == TargetSelector::TrackState::LOCKED) {
     return "LOCKED";
@@ -321,6 +322,7 @@ std::string stateName(TargetSelector::TrackState state) {
   }
   return "ACQUIRE";
 }
+*/
 
 } // namespace
 
@@ -379,61 +381,31 @@ bool TargetSelector::select(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
                             const Eigen::Affine2f &base_to_odom,
                             TargetSelectorResult &result) {
   result = TargetSelectorResult{};
-  result.state = stateName(state_);
-  result.locked = state_ == TrackState::LOCKED;
-  result.lost_count = lost_count_;
+  result.state = "LOCKED";
+  result.locked = true;
+  result.lost_count = 0;
 
   if (!cloud || cloud->empty()) {
     result.reason = "empty cloud";
     return false;
   }
 
-  const Eigen::Vector2f anchor_base = currentAnchorBase(base_to_odom);
+  // Without lock tracking, the anchor is always the robot base (0, 0)
+  const Eigen::Vector2f anchor_base(0.0F, 0.0F);
   result.anchor_base = anchor_base;
   const auto candidates = extractCandidates(cloud, anchor_base, base_to_odom);
   if (candidates.empty()) {
-    ++lost_count_;
-    result.lost_count = lost_count_;
     result.reason = "no valid candidates";
-    if (state_ != TrackState::ACQUIRE) {
-      state_ = TrackState::LOST;
-    }
-    if (lost_count_ >= params_.max_lost_frames) {
-      state_ = TrackState::ACQUIRE;
-      has_pending_relock_ = false;
-      relock_count_ = 0;
-    }
-    result.state = stateName(state_);
     return false;
   }
 
-  if (state_ == TrackState::ACQUIRE) {
-    return updateAcquire(chooseAcquireCandidate(candidates), result);
-  }
-
-  Candidate locked_candidate = chooseLockedCandidate(candidates);
-  if (!locked_candidate.valid) {
-    ++lost_count_;
-    result.lost_count = lost_count_;
-    result.reason = "no candidate passed lock gate";
-    state_ = TrackState::LOST;
-    if (lost_count_ >= params_.max_lost_frames) {
-      state_ = TrackState::ACQUIRE;
-      has_pending_relock_ = false;
-      relock_count_ = 0;
-    }
-    result.state = stateName(state_);
+  Candidate best_candidate = chooseAcquireCandidate(candidates);
+  if (!best_candidate.valid) {
+    result.reason = "no valid candidate chosen";
     return false;
   }
 
-  if (state_ == TrackState::LOST) {
-    return updateLost(locked_candidate, result);
-  }
-
-  lost_count_ = 0;
-  relock_count_ = 0;
-  has_pending_relock_ = false;
-  fillResult(locked_candidate, result);
+  fillResult(best_candidate, result);
   result.valid = true;
   result.locked = true;
   result.state = "LOCKED";

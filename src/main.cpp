@@ -651,6 +651,7 @@ void ApproachNode::pointCloudCallback(
     return;
   }
 
+  double t_proj = 0.0;
   if (selection.selected_cloud && !selection.selected_cloud->empty()) {
     cloud = selection.selected_cloud;
     publish3Dpointcloud(cloud);
@@ -658,8 +659,7 @@ void ApproachNode::pointCloudCallback(
     const auto t4 = Clock::now();
     auto final_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>(*cloud);
     roi_filter_->projection_filter(final_cloud);
-    const double t_proj = elapsed_ms(t4);
-    (void)t_proj;
+    t_proj = elapsed_ms(t4);
   }
 
   const auto t5 = Clock::now();

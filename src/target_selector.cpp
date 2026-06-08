@@ -573,56 +573,7 @@ TargetSelector::Candidate TargetSelector::makeCandidate(
     return candidate;
   }
 
-  // 2. Perform 2D Least-squares circle fit (Secondary round classification)
-  CircleFit circle = fitCircle(points, params_.circle_min_radius, params_.circle_max_radius);
 
-  // Check if circle is a better fit than L-shape to avoid misclassifying squares/rectangles as circles
-  bool circle_preferred = false;
-  if (circle.valid && circle.rmse < params_.circle_rmse_threshold) {
-    if (circle.rmse < fit.metrics.mean_edge_dist) {
-      circle_preferred = true;
-    }
-  }
-
-  if (circle_preferred) {
-    EdgeProjection projection = intersectAnchorRayWithCircle(circle.center, circle.radius, anchor_base);
-    if (projection.valid) {
-      candidate.valid = true;
-      candidate.is_round = true;
-
-      // Setup OBB centered at circle center with diameter dimensions
-      candidate.obb.center = circle.center;
-      Eigen::Vector2f normal_axis = (circle.center - projection.projected).normalized();
-      Eigen::Vector2f lateral_axis(-normal_axis.y(), normal_axis.x());
-      candidate.obb.axis1 = normal_axis;
-      candidate.obb.axis2 = lateral_axis;
-      candidate.obb.length1 = 2.0F * circle.radius;
-      candidate.obb.length2 = 2.0F * circle.radius;
-
-      // Setup Edge
-      candidate.edge.target_center = projection.projected;
-      candidate.edge.normal_axis = normal_axis;
-      candidate.edge.target_axis = lateral_axis;
-      candidate.edge.target_length = 2.0F * circle.radius;
-
-      candidate.projection = projection;
-      candidate.hit_base = projection.projected;
-      candidate.hit_odom = base_to_odom * candidate.hit_base;
-      candidate.normal_odom = normalizedOr(base_to_odom.linear() * normal_axis, Eigen::Vector2f(1.0F, 0.0F));
-      candidate.yaw = std::atan2(candidate.normal_odom.y(), candidate.normal_odom.x());
-
-      // Fill metrics
-      candidate.metrics.rect_area = 4.0F * circle.radius * circle.radius;
-      candidate.metrics.hull_area = kPi * circle.radius * circle.radius;
-      candidate.metrics.fill_ratio = kPi / 4.0F;
-      candidate.metrics.mean_edge_dist = circle.rmse;
-      candidate.metrics.support_ratio = 1.0F;
-      candidate.metrics.target_edge_mean_dist = circle.rmse;
-      candidate.metrics.target_edge_support_ratio = 1.0F;
-
-      return candidate;
-    }
-  }
 
   TargetEdge best_edge;
   EdgeProjection best_projection;

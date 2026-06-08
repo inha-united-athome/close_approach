@@ -137,10 +137,13 @@ private:
   Candidate chooseAcquireCandidate(const std::vector<Candidate> &candidates) const;
   Candidate chooseLockedCandidate(const std::vector<Candidate> &candidates) const;
 
-  void lockTo(const Candidate &candidate, TargetSelectorResult &result);
+  void lockTo(const Candidate &candidate, const Eigen::Affine2f &base_to_odom, TargetSelectorResult &result);
   void fillResult(const Candidate &candidate, TargetSelectorResult &result) const;
+  void fillResultFromLocked(const Eigen::Affine2f &base_to_odom, TargetSelectorResult &result) const;
+  bool handleLostFrame(const Eigen::Affine2f &base_to_odom, TargetSelectorResult &result);
+  void resetAcquire();
   Eigen::Vector2f currentAnchorBase(const Eigen::Affine2f &base_to_odom) const;
-  bool updateAcquire(const Candidate &candidate, TargetSelectorResult &result);
+  bool updateAcquire(const Candidate &candidate, const Eigen::Affine2f &base_to_odom, TargetSelectorResult &result);
   bool updateLost(const Candidate &candidate, TargetSelectorResult &result);
 
   TargetSelectorParams params_;
@@ -158,4 +161,10 @@ private:
   float locked_yaw_ = 0.0F;
   float locked_length_ = 0.0F;
   float locked_area_ = 0.0F;
+
+  Eigen::Vector2f locked_obb_center_odom_{0.0F, 0.0F};
+  Eigen::Vector2f locked_obb_axis1_odom_{1.0F, 0.0F};
+  Eigen::Vector2f locked_obb_axis2_odom_{0.0F, 1.0F};
+  float locked_obb_length1_ = 0.0F;
+  float locked_obb_length2_ = 0.0F;
 };

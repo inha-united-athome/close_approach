@@ -324,71 +324,6 @@ std::string stateName(TargetSelector::TrackState state) {
 }
 */
 
-struct CircleFit {
-  bool valid = false;
-  Eigen::Vector2f center{0.0F, 0.0F};
-  float radius = 0.0F;
-  float rmse = 0.0F;
-};
-
-CircleFit fitCircle(const std::vector<Eigen::Vector2f>& points, float min_radius, float max_radius) {
-  CircleFit result;
-  if (points.size() < 3) {
-    return result;
-  }
-
-  Eigen::MatrixXf M(points.size(), 3);
-  Eigen::VectorXf Y(points.size());
-  for (std::size_t i = 0; i < points.size(); ++i) {
-    M(i, 0) = points[i].x();
-    M(i, 1) = points[i].y();
-    M(i, 2) = 1.0F;
-    Y(i) = points[i].squaredNorm();
-  }
-
-  Eigen::Vector3f X = M.colPivHouseholderQr().solve(Y);
-  float A = X(0);
-  float B = X(1);
-  float C = X(2);
-
-  result.center.x() = A * 0.5F;
-  result.center.y() = B * 0.5F;
-  float r2 = C + result.center.squaredNorm();
-  if (r2 <= 0.0F) {
-    return result;
-  }
-  result.radius = std::sqrt(r2);
-
-  float sum_sq_error = 0.0F;
-  for (const auto& p : points) {
-    float d = (p - result.center).norm();
-    float err = d - result.radius;
-    sum_sq_error += err * err;
-  }
-  result.rmse = std::sqrt(sum_sq_error / static_cast<float>(points.size()));
-  result.valid = std::isfinite(result.rmse) && result.radius > min_radius && result.radius < max_radius;
-  return result;
-}
-
-TargetSelector::EdgeProjection intersectAnchorRayWithCircle(
-    const Eigen::Vector2f& center, float radius, const Eigen::Vector2f& anchor) {
-  TargetSelector::EdgeProjection projection;
-  float dy = center.y() - anchor.y();
-  float r2 = radius * radius;
-  float dy2 = dy * dy;
-  if (dy2 > r2) {
-    return projection; // No intersection
-  }
-
-  float dx = std::sqrt(r2 - dy2);
-  float x_hit = center.x() - dx;
-  projection.projected = Eigen::Vector2f(x_hit, anchor.y());
-  projection.ray_x = x_hit - anchor.x();
-  projection.segment_penalty = 0.0F;
-  projection.valid = std::isfinite(projection.ray_x) && projection.ray_x >= 0.0F;
-  return projection;
-}
-
 } // namespace
 
 void TargetSelector::setParameters(const TargetSelectorParams &params) {
@@ -440,41 +375,128 @@ void TargetSelector::reset() {
   locked_yaw_ = 0.0F;
   locked_length_ = 0.0F;
   locked_area_ = 0.0F;
+  locked_obb_center_odom_ = Eigen::Vector2f(0.0F, 0.0F);
+  locked_obb_axis1_odom_ = Eigen::Vector2f(1.0F, 0.0F);
+  locked_obb_axis2_odom_ = Eigen::Vector2f(0.0F, 1.0F);
+  locked_obb_length1_ = 0.0F;
+  locked_obb_length2_ = 0.0F;
+}
+
+void TargetSelector::resetAcquire() {
+  acquire_count_ = 0;
+  has_pending_acquire_ = false;
+}
+
+bool TargetSelector::handleLostFrame(const Eigen::Affine2f &base_to_odom,
+                                     TargetSelectorResult &result) {
+  lost_count_++;
+  relock_count_ = 0;
+  if (lost_count_ > params_.max_lost_frames) {
+    state_ = TrackState::ACQUIRE;
+    reset();
+    result.reason = "lost timeout";
+    result.state = "ACQUIRE";
+    result.locked = false;
+    return false;
+  } else {
+    state_ = TrackState::LOST;
+    fillResultFromLocked(base_to_odom, result);
+    result.valid = true;
+    result.locked = false;
+    result.state = "LOST";
+    result.lost_count = lost_count_;
+    result.reason = "lost tracking";
+    return true;
+  }
+}
+
+void TargetSelector::fillResultFromLocked(const Eigen::Affine2f &base_to_odom,
+                                          TargetSelectorResult &result) const {
+  result.valid = true;
+  result.is_round = false;
+  result.cluster_id = 9999;
+  
+  const Eigen::Affine2f odom_to_base = base_to_odom.inverse();
+  result.hit_odom = locked_hit_odom_;
+  result.hit_base = odom_to_base * locked_hit_odom_;
+  result.anchor_base = odom_to_base * locked_hit_odom_;
+  
+  result.edge.target_center = result.hit_base;
+  result.edge.normal_axis = normalizedOr(odom_to_base.linear() * locked_normal_odom_, Eigen::Vector2f(1.0F, 0.0F));
+  result.edge.target_axis = Eigen::Vector2f(-result.edge.normal_axis.y(), result.edge.normal_axis.x());
+  result.edge.target_length = locked_length_;
+  
+  result.obb.center = odom_to_base * locked_obb_center_odom_;
+  result.obb.axis1 = normalizedOr(odom_to_base.linear() * locked_obb_axis1_odom_, Eigen::Vector2f(1.0F, 0.0F));
+  result.obb.axis2 = Eigen::Vector2f(-result.obb.axis1.y(), result.obb.axis1.x());
+  result.obb.length1 = locked_obb_length1_;
+  result.obb.length2 = locked_obb_length2_;
+  
+  result.area = locked_area_;
+  result.lost_count = lost_count_;
 }
 
 bool TargetSelector::select(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
                             const Eigen::Affine2f &base_to_odom,
                             TargetSelectorResult &result) {
   result = TargetSelectorResult{};
-  result.state = "LOCKED";
-  result.locked = true;
-  result.lost_count = 0;
+  result.state = (state_ == TrackState::ACQUIRE) ? "ACQUIRE" :
+                 (state_ == TrackState::LOCKED)  ? "LOCKED"  : "LOST";
+  result.locked = (state_ == TrackState::LOCKED);
+  result.lost_count = lost_count_;
 
   if (!cloud || cloud->empty()) {
     result.reason = "empty cloud";
+    if (state_ == TrackState::LOCKED || state_ == TrackState::LOST) {
+      return handleLostFrame(base_to_odom, result);
+    }
     return false;
   }
 
-  // Without lock tracking, the anchor is always the robot base (0, 0)
-  const Eigen::Vector2f anchor_base(0.0F, 0.0F);
+  const Eigen::Vector2f anchor_base = currentAnchorBase(base_to_odom);
   result.anchor_base = anchor_base;
+
   const auto candidates = extractCandidates(cloud, anchor_base, base_to_odom);
-  if (candidates.empty()) {
-    result.reason = "no valid candidates";
-    return false;
-  }
 
-  Candidate best_candidate = chooseAcquireCandidate(candidates);
-  if (!best_candidate.valid) {
-    result.reason = "no valid candidate chosen";
-    return false;
+  if (state_ == TrackState::ACQUIRE) {
+    if (candidates.empty()) {
+      resetAcquire();
+      result.reason = "no candidates in ACQUIRE";
+      return false;
+    }
+    Candidate best_candidate = chooseAcquireCandidate(candidates);
+    if (!best_candidate.valid) {
+      resetAcquire();
+      result.reason = "no valid candidate chosen";
+      return false;
+    }
+    bool locked = updateAcquire(best_candidate, base_to_odom, result);
+    if (locked) {
+      return true;
+    } else {
+      return false;
+    }
+  } else {
+    Candidate best_candidate = chooseLockedCandidate(candidates);
+    if (best_candidate.valid) {
+      lost_count_ = 0;
+      if (state_ == TrackState::LOST) {
+        relock_count_++;
+        if (relock_count_ >= params_.relock_confirm_frames) {
+          state_ = TrackState::LOCKED;
+          relock_count_ = 0;
+        }
+      }
+      fillResultFromLocked(base_to_odom, result);
+      result.selected_cloud = best_candidate.cloud;
+      result.valid = true;
+      result.locked = (state_ == TrackState::LOCKED);
+      result.state = (state_ == TrackState::LOCKED) ? "LOCKED" : "LOST";
+      return true;
+    } else {
+      return handleLostFrame(base_to_odom, result);
+    }
   }
-
-  fillResult(best_candidate, result);
-  result.valid = true;
-  result.locked = true;
-  result.state = "LOCKED";
-  return true;
 }
 
 std::vector<TargetSelector::Candidate> TargetSelector::extractCandidates(
@@ -545,9 +567,24 @@ TargetSelector::Candidate TargetSelector::makeCandidate(
 
   const auto points = toPoints2D(cloud);
 
-  // 1. Perform 2D Least-squares circle fit (Secondary round classification)
+  // 1. Fit L-Shape first to check the rectangular OBB fit metrics
+  const LShapeFit fit = fitLShape(points, anchor_base, params_);
+  if (!fit.valid || fit.metrics.fill_ratio < params_.min_fill_ratio) {
+    return candidate;
+  }
+
+  // 2. Perform 2D Least-squares circle fit (Secondary round classification)
   CircleFit circle = fitCircle(points, params_.circle_min_radius, params_.circle_max_radius);
+
+  // Check if circle is a better fit than L-shape to avoid misclassifying squares/rectangles as circles
+  bool circle_preferred = false;
   if (circle.valid && circle.rmse < params_.circle_rmse_threshold) {
+    if (circle.rmse < fit.metrics.mean_edge_dist) {
+      circle_preferred = true;
+    }
+  }
+
+  if (circle_preferred) {
     EdgeProjection projection = intersectAnchorRayWithCircle(circle.center, circle.radius, anchor_base);
     if (projection.valid) {
       candidate.valid = true;
@@ -585,11 +622,6 @@ TargetSelector::Candidate TargetSelector::makeCandidate(
 
       return candidate;
     }
-  }
-
-  const LShapeFit fit = fitLShape(points, anchor_base, params_);
-  if (!fit.valid || fit.metrics.fill_ratio < params_.min_fill_ratio) {
-    return candidate;
   }
 
   TargetEdge best_edge;
@@ -645,9 +677,7 @@ TargetSelector::Candidate TargetSelector::chooseAcquireCandidate(
   Candidate best;
   float best_cost = std::numeric_limits<float>::max();
   for (const auto &candidate : candidates) {
-    const float cost = candidate.projection.ray_x -
-                       params_.score_support_weight *
-                           candidate.metrics.target_edge_support_ratio;
+    const float cost = candidate.projection.ray_x;
     if (cost < best_cost) {
       best_cost = cost;
       best = candidate;
@@ -709,12 +739,20 @@ TargetSelector::Candidate TargetSelector::chooseLockedCandidate(
 }
 
 void TargetSelector::lockTo(const Candidate &candidate,
+                            const Eigen::Affine2f &base_to_odom,
                             TargetSelectorResult &result) {
   locked_hit_odom_ = candidate.hit_odom;
   locked_normal_odom_ = candidate.normal_odom;
   locked_yaw_ = candidate.yaw;
   locked_length_ = candidate.edge.target_length;
   locked_area_ = candidate.area;
+
+  locked_obb_center_odom_ = base_to_odom * candidate.obb.center;
+  locked_obb_axis1_odom_ = base_to_odom.linear() * candidate.obb.axis1;
+  locked_obb_axis2_odom_ = base_to_odom.linear() * candidate.obb.axis2;
+  locked_obb_length1_ = candidate.obb.length1;
+  locked_obb_length2_ = candidate.obb.length2;
+
   lost_count_ = 0;
   relock_count_ = 0;
   acquire_count_ = 0;
@@ -722,9 +760,8 @@ void TargetSelector::lockTo(const Candidate &candidate,
   has_pending_relock_ = false;
   state_ = TrackState::LOCKED;
 
-  fillResult(candidate, result);
-  result.valid = true;
-  result.locked = true;
+  fillResultFromLocked(base_to_odom, result);
+  result.selected_cloud = candidate.cloud;
   result.newly_locked = true;
   result.state = "LOCKED";
 }
@@ -754,6 +791,7 @@ TargetSelector::currentAnchorBase(const Eigen::Affine2f &base_to_odom) const {
 }
 
 bool TargetSelector::updateAcquire(const Candidate &candidate,
+                                   const Eigen::Affine2f &base_to_odom,
                                    TargetSelectorResult &result) {
   if (!candidate.valid) {
     result.reason = "no acquire candidate";
@@ -779,7 +817,7 @@ bool TargetSelector::updateAcquire(const Candidate &candidate,
   }
 
   if (acquire_count_ >= params_.acquire_confirm_frames) {
-    lockTo(candidate, result);
+    lockTo(candidate, base_to_odom, result);
     return true;
   }
 
@@ -792,38 +830,7 @@ bool TargetSelector::updateAcquire(const Candidate &candidate,
 
 bool TargetSelector::updateLost(const Candidate &candidate,
                                 TargetSelectorResult &result) {
-  if (!candidate.valid) {
-    result.reason = "no relock candidate";
-    return false;
-  }
-
-  if (!has_pending_relock_) {
-    pending_relock_ = candidate;
-    relock_count_ = 1;
-    has_pending_relock_ = true;
-  } else {
-    const float hit_dist =
-        (candidate.hit_odom - pending_relock_.hit_odom).norm();
-    const float yaw_diff = angleDiff(candidate.yaw, pending_relock_.yaw);
-    if (hit_dist <= params_.acquire_hit_gate &&
-        yaw_diff <= params_.acquire_yaw_gate) {
-      pending_relock_ = candidate;
-      ++relock_count_;
-    } else {
-      pending_relock_ = candidate;
-      relock_count_ = 1;
-    }
-  }
-
-  if (relock_count_ >= params_.relock_confirm_frames) {
-    lockTo(candidate, result);
-    result.newly_locked = false;
-    return true;
-  }
-
-  std::ostringstream reason;
-  reason << "relocking " << relock_count_ << "/"
-         << params_.relock_confirm_frames;
-  result.reason = reason.str();
+  (void)candidate;
+  (void)result;
   return false;
 }

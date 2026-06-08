@@ -651,13 +651,16 @@ void ApproachNode::pointCloudCallback(
     return;
   }
 
-  cloud = selection.selected_cloud;
-  publish3Dpointcloud(cloud);
+  if (selection.selected_cloud && !selection.selected_cloud->empty()) {
+    cloud = selection.selected_cloud;
+    publish3Dpointcloud(cloud);
 
-  const auto t4 = Clock::now();
-  auto final_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>(*cloud);
-  roi_filter_->projection_filter(final_cloud);
-  const double t_proj = elapsed_ms(t4);
+    const auto t4 = Clock::now();
+    auto final_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>(*cloud);
+    roi_filter_->projection_filter(final_cloud);
+    const double t_proj = elapsed_ms(t4);
+    (void)t_proj;
+  }
 
   const auto t5 = Clock::now();
   obb = selection.obb;
@@ -849,6 +852,18 @@ void ApproachNode::pointCloudCallback(
       control_success = true;
       break;
     }
+  }
+
+  if (selection.lost_count > 0) {
+    const float lost_ratio = static_cast<float>(selection.lost_count) /
+                             static_cast<float>(target_selector_params_.max_lost_frames);
+    const float lost_decel_factor = std::max(0.0F, 1.0F - lost_ratio);
+    cmd_vel.linear.x *= lost_decel_factor;
+    cmd_vel.angular.z *= lost_decel_factor;
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500,
+                         "Target lost! Decelerating: lost_count=%d/%d, factor=%.2f",
+                         selection.lost_count, target_selector_params_.max_lost_frames,
+                         lost_decel_factor);
   }
 
   cmd_vel_publisher_->publish(cmd_vel);

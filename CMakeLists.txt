@@ -57,7 +57,6 @@ set(APPROACH_CPP_SOURCES
   src/edge_extractor.cpp
   src/error_estimator.cpp
   src/pid_controller.cpp
-  src/target_selector.cpp
 )
 
 set(APPROACH_HEAD_CONTROL_CPP_SOURCES

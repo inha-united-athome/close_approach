@@ -239,9 +239,10 @@ else()
   target_link_libraries(dead_reckoning_approach_node ${tf2_geometry_msgs_LIBRARIES})
 endif()
 
-rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
-target_link_libraries(submap_close_approach_perception_node "${cpp_typesupport_target}")
-target_link_libraries(submap_close_approach_controller_node "${cpp_typesupport_target}")
+rosidl_target_interfaces(submap_close_approach_perception_node
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+rosidl_target_interfaces(submap_close_approach_controller_node
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 target_compile_definitions(approach_node PRIVATE ${PCL_DEFINITIONS})
 target_compile_definitions(approach_head_control_node PRIVATE ${PCL_DEFINITIONS})

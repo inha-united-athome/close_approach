@@ -669,6 +669,22 @@ TargetSelector::Candidate TargetSelector::makeCandidate(
                    Eigen::Vector2f(1.0F, 0.0F));
   candidate.yaw =
       std::atan2(candidate.normal_odom.y(), candidate.normal_odom.x());
+
+  // Debug 출력: 후보별 핵심 값 확인
+  {
+    std::ostringstream ss;
+    ss << "[TS_DEBUG] cluster=" << candidate.cluster_id
+       << " hit_base=(" << candidate.hit_base.x() << "," << candidate.hit_base.y() << ")"
+       << " proj_x=" << candidate.projection.ray_x
+       << " seg_pen=" << candidate.projection.segment_penalty
+       << " edge_center=(" << candidate.edge.target_center.x() << "," << candidate.edge.target_center.y() << ")"
+       << " edge_len=" << candidate.edge.target_length
+       << " support=" << candidate.metrics.target_edge_support_ratio
+       << " area=" << candidate.area
+       << " fill_ratio=" << candidate.metrics.fill_ratio
+       << std::endl;
+    std::cout << ss.str();
+  }
   return candidate;
 }
 

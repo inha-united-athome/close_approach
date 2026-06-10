@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -26,6 +27,9 @@ public:
   {
     declareParameters();
     loadParameters();
+
+    last_error_time_ = now();
+    in_tolerance_since_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
 
     error_sub_ = create_subscription<close_approach::msg::CloseApproachError>(
       error_topic_, 10,
@@ -182,8 +186,8 @@ private:
   double watchdog_timeout_sec_ = 0.5;
 
   bool has_error_ = false;
-  rclcpp::Time last_error_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-  rclcpp::Time in_tolerance_since_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+  rclcpp::Time last_error_time_;
+  rclcpp::Time in_tolerance_since_;
 };
 }  // namespace close_approach
 

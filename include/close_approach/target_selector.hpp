@@ -129,11 +129,13 @@ private:
   std::vector<Candidate>
   extractCandidates(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
                     const Eigen::Vector2f &anchor_base,
-                    const Eigen::Affine2f &base_to_odom) const;
+                    const Eigen::Affine2f &base_to_odom,
+                    const Eigen::Vector2f *locked_normal_base) const;
   Candidate makeCandidate(std::size_t cluster_id,
                           const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
                           const Eigen::Vector2f &anchor_base,
-                          const Eigen::Affine2f &base_to_odom) const;
+                          const Eigen::Affine2f &base_to_odom,
+                          const Eigen::Vector2f *locked_normal_base) const;
   Candidate chooseAcquireCandidate(const std::vector<Candidate> &candidates) const;
   Candidate chooseLockedCandidate(const std::vector<Candidate> &candidates) const;
 

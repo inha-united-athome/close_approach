@@ -456,7 +456,18 @@ bool TargetSelector::select(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
   const Eigen::Vector2f anchor_base = currentAnchorBase(base_to_odom);
   result.anchor_base = anchor_base;
 
-  const auto candidates = extractCandidates(cloud, anchor_base, base_to_odom);
+  const Eigen::Vector2f *locked_normal_ptr = nullptr;
+  Eigen::Vector2f locked_normal_base;
+  if (state_ != TrackState::ACQUIRE) {
+    const Eigen::Affine2f odom_to_base = base_to_odom.inverse();
+    locked_normal_base = normalizedOr(
+        odom_to_base.linear() * locked_normal_odom_,
+        Eigen::Vector2f(1.0F, 0.0F));
+    locked_normal_ptr = &locked_normal_base;
+  }
+
+  const auto candidates = extractCandidates(cloud, anchor_base, base_to_odom,
+                                            locked_normal_ptr);
 
   if (state_ == TrackState::ACQUIRE) {
     if (candidates.empty()) {
@@ -502,7 +513,8 @@ bool TargetSelector::select(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
 std::vector<TargetSelector::Candidate> TargetSelector::extractCandidates(
     const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
     const Eigen::Vector2f &anchor_base,
-    const Eigen::Affine2f &base_to_odom) const {
+    const Eigen::Affine2f &base_to_odom,
+    const Eigen::Vector2f *locked_normal_base) const {
   auto tree = std::make_shared<pcl::search::KdTree<pcl::PointXYZ>>();
   tree->setInputCloud(cloud);
 
@@ -530,7 +542,8 @@ std::vector<TargetSelector::Candidate> TargetSelector::extractCandidates(
     cluster_cloud->is_dense = false;
 
     Candidate candidate =
-        makeCandidate(i, cluster_cloud, anchor_base, base_to_odom);
+        makeCandidate(i, cluster_cloud, anchor_base, base_to_odom,
+                      locked_normal_base);
     if (candidate.valid) {
       candidates.push_back(candidate);
     }
@@ -541,7 +554,8 @@ std::vector<TargetSelector::Candidate> TargetSelector::extractCandidates(
 TargetSelector::Candidate TargetSelector::makeCandidate(
     std::size_t cluster_id, const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
     const Eigen::Vector2f &anchor_base,
-    const Eigen::Affine2f &base_to_odom) const {
+    const Eigen::Affine2f &base_to_odom,
+    const Eigen::Vector2f *locked_normal_base) const {
   Candidate candidate;
   candidate.cluster_id = cluster_id;
   candidate.cloud = cloud;
@@ -579,6 +593,7 @@ TargetSelector::Candidate TargetSelector::makeCandidate(
   EdgeProjection best_projection;
   bool has_edge = false;
   float best_cost = std::numeric_limits<float>::max();
+  float best_normal_dot = -1.0F;
   for (const auto &edge : fit.supported_edges) {
     const EdgeProjection projection =
         intersectAnchorRayWithTargetEdge(edge, anchor_base,
@@ -595,12 +610,42 @@ TargetSelector::Candidate TargetSelector::makeCandidate(
     }
 
     const float cost = projection.ray_x;
-    if (cost < best_cost) {
-      best_cost = cost;
-      best_edge = edge;
-      best_projection = projection;
-      candidate.metrics = metrics;
-      has_edge = true;
+
+    // locked 상태에서는 기존 normal 방향과 일치하는 엣지를 강하게 우선 선택.
+    // 같은 클러스터의 두 L-shape 엣지 중 기존 방향과 다른 쪽으로 뛰는 것을 방지.
+    if (locked_normal_base) {
+      const float normal_dot = edge.normal_axis.dot(*locked_normal_base);
+      // 기존 방향과 잘 맞는 엣지(dot>0.7)가 있으면 ray_x 무시하고 그것을 선택
+      const bool prev_matched = best_normal_dot >= 0.7F;
+      const bool curr_matched = normal_dot >= 0.7F;
+      if (curr_matched && !prev_matched) {
+        // 새 엣지가 locked normal과 일치하고, 이전 best는 아닌 경우 → 무조건 교체
+        best_cost = cost;
+        best_normal_dot = normal_dot;
+        best_edge = edge;
+        best_projection = projection;
+        candidate.metrics = metrics;
+        has_edge = true;
+      } else if (curr_matched == prev_matched) {
+        // 둘 다 일치하거나 둘 다 불일치 → 기존 ray_x 기준
+        if (cost < best_cost) {
+          best_cost = cost;
+          best_normal_dot = normal_dot;
+          best_edge = edge;
+          best_projection = projection;
+          candidate.metrics = metrics;
+          has_edge = true;
+        }
+      }
+      // curr가 불일치이고 prev가 일치 → 교체 안 함
+    } else {
+      if (cost < best_cost) {
+        best_cost = cost;
+        best_edge = edge;
+        best_projection = projection;
+        candidate.metrics = metrics;
+        has_edge = true;
+      }
     }
   }
 

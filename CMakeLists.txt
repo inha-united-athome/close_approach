@@ -48,7 +48,6 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     std_msgs
     geometry_msgs
 )
-rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 set(APPROACH_CPP_SOURCES
   src/main.cpp
@@ -224,11 +223,6 @@ target_link_libraries(align_to_person_node
 target_link_libraries(submap_close_approach_perception_node
   ${PCL_LIBRARIES}
   ${PCL_IO_LIBRARIES}
-  "${cpp_typesupport_target}"
-)
-
-target_link_libraries(submap_close_approach_controller_node
-  "${cpp_typesupport_target}"
 )
 
 if(TARGET tf2_geometry_msgs::tf2_geometry_msgs)
@@ -244,6 +238,11 @@ else()
   target_link_libraries(align_to_person_node ${tf2_geometry_msgs_LIBRARIES})
   target_link_libraries(dead_reckoning_approach_node ${tf2_geometry_msgs_LIBRARIES})
 endif()
+
+rosidl_target_interfaces(submap_close_approach_perception_node
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+rosidl_target_interfaces(submap_close_approach_controller_node
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 target_compile_definitions(approach_node PRIVATE ${PCL_DEFINITIONS})
 target_compile_definitions(approach_head_control_node PRIVATE ${PCL_DEFINITIONS})

@@ -188,16 +188,21 @@ TargetEdge makeEdgeCandidate(const Eigen::Vector2f &center,
   return edge;
 }
 
-std::array<TargetEdge, 2> makeSupportedLShapeEdges(
-    const OBB &obb, int side_u, int side_v, const Eigen::Vector2f &anchor) {
-  const Eigen::Vector2f u_normal = side_u == 0 ? -obb.axis1 : obb.axis1;
-  const Eigen::Vector2f v_normal = side_v == 0 ? -obb.axis2 : obb.axis2;
-
+std::array<TargetEdge, 4> makeAllObbEdges(
+    const OBB &obb, const Eigen::Vector2f &anchor) {
   return {
-      makeEdgeCandidate(obb.center + u_normal * (obb.length1 * 0.5F),
-                        obb.axis2, u_normal, obb.length2, anchor),
-      makeEdgeCandidate(obb.center + v_normal * (obb.length2 * 0.5F),
-                        obb.axis1, v_normal, obb.length1, anchor),
+      // +axis1 side (normal = +axis1)
+      makeEdgeCandidate(obb.center + obb.axis1 * (obb.length1 * 0.5F),
+                        obb.axis2, obb.axis1, obb.length2, anchor),
+      // -axis1 side (normal = -axis1)
+      makeEdgeCandidate(obb.center - obb.axis1 * (obb.length1 * 0.5F),
+                        obb.axis2, -obb.axis1, obb.length2, anchor),
+      // +axis2 side (normal = +axis2)
+      makeEdgeCandidate(obb.center + obb.axis2 * (obb.length2 * 0.5F),
+                        obb.axis1, obb.axis2, obb.length1, anchor),
+      // -axis2 side (normal = -axis2)
+      makeEdgeCandidate(obb.center - obb.axis2 * (obb.length2 * 0.5F),
+                        obb.axis1, -obb.axis2, obb.length1, anchor),
   };
 }
 
@@ -227,7 +232,7 @@ TargetSelector::EdgeProjection intersectAnchorRayWithTargetEdge(
 struct LShapeFit {
   bool valid = false;
   OBB obb;
-  std::array<TargetEdge, 2> supported_edges;
+  std::array<TargetEdge, 4> all_edges;
   TargetFitMetrics metrics;
 };
 
@@ -299,8 +304,7 @@ LShapeFit fitLShape(const std::vector<Eigen::Vector2f> &points,
     return result;
   }
 
-  result.supported_edges =
-      makeSupportedLShapeEdges(result.obb, best_side_u, best_side_v, anchor);
+  result.all_edges = makeAllObbEdges(result.obb, anchor);
   result.metrics = computeMetrics(points, result.obb, params.edge_threshold);
   return result;
 }
@@ -594,7 +598,7 @@ TargetSelector::Candidate TargetSelector::makeCandidate(
   bool has_edge = false;
   float best_cost = std::numeric_limits<float>::max();
   float best_normal_dot = -1.0F;
-  for (const auto &edge : fit.supported_edges) {
+  for (const auto &edge : fit.all_edges) {
     const EdgeProjection projection =
         intersectAnchorRayWithTargetEdge(edge, anchor_base,
                                          params_.ray_segment_tolerance);

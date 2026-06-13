@@ -78,6 +78,21 @@ float dist2d(const geometry_msgs::msg::Point & a, const geometry_msgs::msg::Poin
   return std::hypot(static_cast<float>(a.x - b.x), static_cast<float>(a.y - b.y));
 }
 
+std::string normalizeFrameId(std::string frame_id)
+{
+  while (!frame_id.empty() && frame_id.front() == '/') {
+    frame_id.erase(frame_id.begin());
+  }
+  return frame_id;
+}
+
+bool containsFrame(const std::vector<std::string> & frames, const std::string & frame)
+{
+  return std::any_of(frames.begin(), frames.end(), [&frame](const auto & candidate) {
+    return normalizeFrameId(candidate) == frame;
+  });
+}
+
 visualization_msgs::msg::Marker sphere(
   const std_msgs::msg::Header & h, const std::string & ns, int id,
   const geometry_msgs::msg::Point & p, float r, float g, float b)
@@ -92,6 +107,62 @@ visualization_msgs::msg::Marker sphere(
   m.pose.orientation.w = 1.0;
   m.scale.x = 0.08;
   m.scale.y = 0.08;
+  m.scale.z = 0.08;
+  m.color.r = r;
+  m.color.g = g;
+  m.color.b = b;
+  m.color.a = 1.0;
+  m.lifetime = rclcpp::Duration::from_seconds(0.3);
+  return m;
+}
+
+geometry_msgs::msg::Point point(double x, double y, double z)
+{
+  geometry_msgs::msg::Point p;
+  p.x = x;
+  p.y = y;
+  p.z = z;
+  return p;
+}
+
+visualization_msgs::msg::Marker lineStrip(
+  const std_msgs::msg::Header & h, const std::string & ns, int id,
+  const std::vector<geometry_msgs::msg::Point> & points,
+  double width, float r, float g, float b, float a = 1.0F)
+{
+  visualization_msgs::msg::Marker m;
+  m.header = h;
+  m.ns = ns;
+  m.id = id;
+  m.type = visualization_msgs::msg::Marker::LINE_STRIP;
+  m.action = visualization_msgs::msg::Marker::ADD;
+  m.pose.orientation.w = 1.0;
+  m.points = points;
+  m.scale.x = width;
+  m.color.r = r;
+  m.color.g = g;
+  m.color.b = b;
+  m.color.a = a;
+  m.lifetime = rclcpp::Duration::from_seconds(0.3);
+  return m;
+}
+
+visualization_msgs::msg::Marker arrow(
+  const std_msgs::msg::Header & h, const std::string & ns, int id,
+  const geometry_msgs::msg::Point & start, const geometry_msgs::msg::Point & end,
+  float r, float g, float b)
+{
+  visualization_msgs::msg::Marker m;
+  m.header = h;
+  m.ns = ns;
+  m.id = id;
+  m.type = visualization_msgs::msg::Marker::ARROW;
+  m.action = visualization_msgs::msg::Marker::ADD;
+  m.pose.orientation.w = 1.0;
+  m.points.push_back(start);
+  m.points.push_back(end);
+  m.scale.x = 0.025;
+  m.scale.y = 0.06;
   m.scale.z = 0.08;
   m.color.r = r;
   m.color.g = g;
@@ -134,6 +205,8 @@ private:
     declare_parameter<std::string>("front_band_topic", "/close_approach/front_band_cloud");
     declare_parameter<std::string>("marker_topic", "/close_approach/markers");
     declare_parameter<double>("max_cloud_age_sec", 0.6);
+    declare_parameter<double>("transform_timeout_sec", 0.05);
+    declare_parameter<std::vector<std::string>>("target_frame_aliases", {"base"});
     declare_parameter<double>("roi_x_min", 0.2);
     declare_parameter<double>("roi_x_max", 2.0);
     declare_parameter<double>("roi_y_abs_max_acquire", 0.8);
@@ -179,6 +252,8 @@ private:
     front_band_topic_ = get_parameter("front_band_topic").as_string();
     marker_topic_ = get_parameter("marker_topic").as_string();
     max_cloud_age_sec_ = get_parameter("max_cloud_age_sec").as_double();
+    transform_timeout_sec_ = get_parameter("transform_timeout_sec").as_double();
+    target_frame_aliases_ = get_parameter("target_frame_aliases").as_string_array();
     roi_x_min_ = get_parameter("roi_x_min").as_double();
     roi_x_max_ = get_parameter("roi_x_max").as_double();
     roi_y_abs_max_acquire_ = get_parameter("roi_y_abs_max_acquire").as_double();
@@ -216,25 +291,25 @@ private:
 
   void onCloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
   {
+    const auto source_frame = normalizeFrameId(msg->header.frame_id);
+    const auto target_frame = normalizeFrameId(target_frame_);
     if ((msg->header.stamp.sec != 0 || msg->header.stamp.nanosec != 0) &&
+      max_cloud_age_sec_ > 0.0 &&
       (now() - msg->header.stamp).seconds() > max_cloud_age_sec_)
     {
       publishInvalid(msg->header, "STALE", "cloud is too old");
       return;
     }
 
-    sensor_msgs::msg::PointCloud2 transformed;
-    try {
-      transformed = tf_buffer_.transform(*msg, target_frame_, tf2::durationFromSec(0.05));
-    } catch (const tf2::TransformException & ex) {
-      publishInvalid(msg->header, "TF_FAIL", ex.what());
+    auto transformed = transformToTargetFrame(*msg);
+    if (!transformed) {
       return;
     }
 
     auto cloud = std::make_shared<CloudT>();
-    pcl::fromROSMsg(transformed, *cloud);
+    pcl::fromROSMsg(*transformed, *cloud);
     auto filtered = preprocess(cloud);
-    publishCloud(filtered, transformed.header, preprocessed_pub_);
+    publishCloud(filtered, transformed->header, preprocessed_pub_);
 
     auto candidates = cluster(filtered);
     auto selected = select(candidates);
@@ -244,12 +319,52 @@ private:
         state_ = "LOST";
         has_lock_ = false;
       }
-      publishInvalid(transformed.header, state_, "no selected cluster");
+      publishInvalid(transformed->header, state_, "no selected cluster");
       return;
     }
 
     updateLock(*selected);
-    publishResult(transformed.header, filtered, *selected);
+    publishResult(transformed->header, filtered, *selected);
+  }
+
+  std::optional<sensor_msgs::msg::PointCloud2> transformToTargetFrame(
+    const sensor_msgs::msg::PointCloud2 & msg)
+  {
+    const auto source_frame = normalizeFrameId(msg.header.frame_id);
+    const auto target_frame = normalizeFrameId(target_frame_);
+    if (source_frame.empty()) {
+      publishInvalid(msg.header, "TF_FAIL", "cloud frame_id is empty");
+      return std::nullopt;
+    }
+
+    sensor_msgs::msg::PointCloud2 transformed;
+    if (source_frame == target_frame) {
+      transformed = msg;
+      transformed.header.frame_id = target_frame_;
+      return transformed;
+    }
+
+    try {
+      const auto tf = tf_buffer_.lookupTransform(
+        target_frame_, msg.header.frame_id, tf2::TimePointZero,
+        tf2::durationFromSec(transform_timeout_sec_));
+      tf2::doTransform(msg, transformed, tf);
+      transformed.header.frame_id = target_frame_;
+      return transformed;
+    } catch (const tf2::TransformException & ex) {
+      if (!containsFrame(target_frame_aliases_, source_frame)) {
+        publishInvalid(msg.header, "TF_FAIL", ex.what());
+        return std::nullopt;
+      }
+
+      transformed = msg;
+      transformed.header.frame_id = target_frame_;
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "No TF %s -> %s; treating %s as target-frame alias",
+        source_frame.c_str(), target_frame_.c_str(), source_frame.c_str());
+      return transformed;
+    }
   }
 
   std::shared_ptr<CloudT> preprocess(const std::shared_ptr<CloudT> & input)
@@ -459,8 +574,24 @@ private:
     error_pub_->publish(e);
 
     visualization_msgs::msg::MarkerArray markers;
-    markers.markers.push_back(sphere(h, "p_align", 0, locked_align_, 0.0F, 1.0F, 0.0F));
-    markers.markers.push_back(sphere(h, "p_front", 1, locked_front_, 1.0F, 0.3F, 0.0F));
+    constexpr double marker_z = 0.08;
+    const auto desired_left = point(desired_distance_, -roi_y_abs_max_acquire_, marker_z);
+    const auto desired_right = point(desired_distance_, roi_y_abs_max_acquire_, marker_z);
+    const auto front_current = point(locked_front_.x, locked_front_.y, marker_z);
+    const auto front_target = point(desired_distance_, locked_front_.y, marker_z);
+    const auto align_current = point(locked_align_.x, locked_align_.y, marker_z + 0.03);
+    const auto align_target = point(locked_align_.x, 0.0, marker_z + 0.03);
+
+    markers.markers.push_back(sphere(h, "align_point", 0, locked_align_, 0.0F, 1.0F, 0.0F));
+    markers.markers.push_back(sphere(h, "front_point", 1, locked_front_, 1.0F, 0.45F, 0.0F));
+    markers.markers.push_back(lineStrip(
+      h, "desired_distance", 2, {desired_left, desired_right}, 0.025, 0.1F, 0.8F, 1.0F));
+    markers.markers.push_back(lineStrip(
+      h, "aim_line", 3, {point(0.0, 0.0, marker_z), align_current}, 0.015, 0.0F, 1.0F, 0.0F, 0.8F));
+    markers.markers.push_back(arrow(
+      h, "x_error", 4, front_current, front_target, 1.0F, 0.1F, 0.1F));
+    markers.markers.push_back(arrow(
+      h, "y_error", 5, align_current, align_target, 0.1F, 0.35F, 1.0F));
     marker_pub_->publish(markers);
   }
 
@@ -501,7 +632,9 @@ private:
   std::string selected_cluster_topic_;
   std::string front_band_topic_;
   std::string marker_topic_;
+  std::vector<std::string> target_frame_aliases_;
   double max_cloud_age_sec_ = 0.6;
+  double transform_timeout_sec_ = 0.05;
   double roi_x_min_ = 0.2;
   double roi_x_max_ = 2.0;
   double roi_y_abs_max_acquire_ = 0.8;

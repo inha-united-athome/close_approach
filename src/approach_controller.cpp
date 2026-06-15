@@ -1,0 +1,113 @@
+#include "close_approach/approach_controller.hpp"
+#include "close_approach/error_estimator.hpp"
+
+#include <cmath>
+
+ApproachController::ApproachController() : Node("approach_controller") {
+  // Params
+  this->declare_parameter<float>("kp_x",     0.25F);
+  this->declare_parameter<float>("ki_x",     0.0F);
+  this->declare_parameter<float>("kd_x",     0.0F);
+  this->declare_parameter<float>("kp_theta", 1.2F);
+  this->declare_parameter<float>("ki_theta", 0.0F);
+  this->declare_parameter<float>("kd_theta", 0.0F);
+  this->declare_parameter<float>("max_v",           0.10F);
+  this->declare_parameter<float>("max_w",           0.2F);
+  this->declare_parameter<float>("decel_dist_max",  0.20F);
+  this->declare_parameter<float>("decel_dist_min",  0.05F);
+  this->declare_parameter<float>("decel_ratio",     0.5F);
+
+  this->get_parameter("kp_x",           kp_x_);
+  this->get_parameter("ki_x",           ki_x_);
+  this->get_parameter("kd_x",           kd_x_);
+  this->get_parameter("kp_theta",       kp_theta_);
+  this->get_parameter("ki_theta",       ki_theta_);
+  this->get_parameter("kd_theta",       kd_theta_);
+  this->get_parameter("max_v",          max_v_);
+  this->get_parameter("max_w",          max_w_);
+  this->get_parameter("decel_dist_max", decel_dist_max_);
+  this->get_parameter("decel_dist_min", decel_dist_min_);
+  this->get_parameter("decel_ratio",    decel_ratio_);
+
+  pid_ = std::make_shared<PIDController>();
+  pid_->setParameters(kp_x_, 0.0F, kp_theta_,
+                      ki_x_, 0.0F, ki_theta_,
+                      kd_x_, 0.0F, kd_theta_);
+  pid_->setLimits(max_v_, max_w_);
+
+  auto qos_rel = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+
+  error_sub_  = this->create_subscription<ApproachError>(
+      "/approach/control_error", qos_rel,
+      std::bind(&ApproachController::errorCallback, this, std::placeholders::_1));
+  active_sub_ = this->create_subscription<std_msgs::msg::Bool>(
+      "/approach/active", qos_rel,
+      std::bind(&ApproachController::activeCallback, this, std::placeholders::_1));
+  cmd_vel_pub_= this->create_publisher<geometry_msgs::msg::Twist>(
+      "/cmd_vel", qos_rel);
+
+  RCLCPP_INFO(this->get_logger(), "ApproachController ready");
+}
+
+void ApproachController::activeCallback(const std_msgs::msg::Bool::SharedPtr msg) {
+  if (msg->data) {
+    // Approach just started — reset PID and initial distance
+    pid_->reset();
+    initial_dist_set_ = false;
+    initial_dist_     = 0.0f;
+    prev_time_valid_  = false;
+  } else {
+    // Approach stopped — publish stop
+    geometry_msgs::msg::Twist stop;
+    cmd_vel_pub_->publish(stop);
+  }
+}
+
+void ApproachController::errorCallback(const ApproachError::ConstSharedPtr &msg) {
+  // Publish stop if not valid
+  if (!msg->valid) {
+    geometry_msgs::msg::Twist stop;
+    cmd_vel_pub_->publish(stop);
+    return;
+  }
+
+  // Capture initial distance for decel ramp
+  if (!initial_dist_set_ && msg->initial_dist_m > 0.0f) {
+    initial_dist_    = msg->initial_dist_m;
+    initial_dist_set_= true;
+  }
+
+  // dt
+  const rclcpp::Time now = msg->header.stamp;
+  float dt = 0.05f;  // default 20 Hz
+  if (prev_time_valid_) {
+    const float measured = static_cast<float>((now - prev_time_).seconds());
+    if (measured > 0.0f && measured < 1.0f) dt = measured;
+  }
+  prev_time_       = now;
+  prev_time_valid_ = true;
+
+  // Decel ramp (using initial_dist and current x_error)
+  float v_scale = 1.0f;
+  if (initial_dist_set_ && initial_dist_ > 0.0f) {
+    const float eff_decel = std::clamp(
+        initial_dist_ * decel_ratio_, decel_dist_min_, decel_dist_max_);
+    v_scale = std::clamp(std::abs(msg->x_error) / eff_decel, 0.0f, 1.0f);
+  }
+
+  // Build SE2Error: x from PC, y=0, degree_theta from image (already in rad)
+  SE2Error se2;
+  se2.x            = msg->x_error;
+  se2.y            = 0.0f;
+  se2.degree_theta = msg->theta_error;  // PIDController expects radians despite the name
+
+  const auto cmd = pid_->compute_control(se2, dt, v_scale);
+  cmd_vel_pub_->publish(cmd);
+}
+
+int main(int argc, char **argv) {
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<ApproachController>());
+  rclcpp::shutdown();
+  return 0;
+}

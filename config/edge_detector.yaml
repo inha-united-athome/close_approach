@@ -1,0 +1,15 @@
+# edge_yaw_viewer에서 's' 키로 저장하면 이 파일이 덮어써짐
+edge_detector:
+  ros__parameters:
+    img_topic: "/camera/camera_head/color/image_raw/compressed"
+
+    canny_low:    50
+    canny_high:   150
+    hough_thresh: 40
+    min_length:   60
+    max_gap:      15
+
+    roi_top_pct:   20
+    roi_bot_pct:   80
+    roi_left_pct:  20
+    roi_right_pct: 80

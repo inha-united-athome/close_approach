@@ -1,0 +1,13 @@
+approach_manager:
+  ros__parameters:
+    target_frame: "base_nav"
+    odom_frame:   "odom"
+
+    tol_x:              0.03   # m
+    tol_theta:          0.08   # rad (~4.5°)
+    dwell_duration_sec: 2.0
+    align_timeout_sec:  5.0
+    pc_timeout_sec:     2.0    # PC 데이터 없으면 ALIGN_THETA 로 전환
+
+    trail_min_dist: 0.03       # m
+    trail_min_yaw:  0.052      # rad (~3°)

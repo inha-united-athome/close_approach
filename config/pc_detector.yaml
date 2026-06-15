@@ -1,0 +1,28 @@
+pc_detector:
+  ros__parameters:
+    cloud_topic:  "/camera/camera_head/depth/color/points"
+    lidar_topic:  "/livox/lidar"
+    info_topic:   "/camera/camera_head/color/camera_info"
+    target_frame: "base_nav"
+    odom_frame:   "odom"
+
+    roi_x_min:    0.1
+    roi_x_max:    2.0
+    roi_y_abs_max: 0.8
+    roi_z_max:    1.5
+
+    leaf_size:           0.03
+    mean_k:              50
+    stddev_mul_thresh:   0.5
+    ground_height:       0.1
+    cluster_tolerance:   0.05
+    min_cluster_size:    100
+    max_cluster_size:    10000
+    min_cluster_area:    0.09
+
+    target_standoff_distance: 0.3
+
+    spike_dy_max:            0.25
+    spike_dtheta_max:        0.25
+    max_consecutive_outliers: 5
+    lidar_max_age_sec:       0.3

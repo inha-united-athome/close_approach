@@ -239,7 +239,8 @@ private:
       const auto path = session_dir_ / pcd_file;
       pcl::PCLPointCloud2 pcl_cloud;
       pcl_conversions::toPCL(cloud_, pcl_cloud);
-      if (pcl::io::savePCDFileBinary(path.string(), pcl_cloud) != 0) {
+      pcl::PCDWriter writer;
+      if (writer.writeBinary(path.string(), pcl_cloud) != 0) {
         pcd_file.clear();
       }
     }

@@ -31,27 +31,143 @@ Nav2 brings the robot near the target area; `close_approach` performs the precis
 # Evaluation
 `TODO`
 
-# Logs
-## Close approach logs
+# Runtime Architecture
 
-When the `debug` parameter is enabled, `approach_node` writes one timestamped
-directory per action under `/home/thor/inha_logs/module/close_approach`.
-Point cloud snapshots are rate-limited per processing stage by the
-`debug_save_period_sec` parameter.
+The current launch path is `launch/approach.launch.py`. It runs the local
+approach pipeline as separate ROS 2 nodes:
 
-```text
-/home/thor/inha_logs/module/close_approach/action_YYYYMMDD_HHMMSS_mmm/
-├── measure_YYYYMMDD_HHMMSS_mmm.txt
-├── YYYYMMDD_HHMMSS_mmm_XXXXXX_roi_filtered.pcd
-├── YYYYMMDD_HHMMSS_mmm_XXXXXX_clustered.pcd
-└── YYYYMMDD_HHMMSS_mmm_XXXXXX_final.pcd
+- `pc_detector_node`: point-cloud based target geometry, longitudinal `x_error`,
+  debug clouds, OBB marker, and target-edge marker
+- `edge_detector_node`: image-edge based yaw error from compressed camera images
+- `approach_manager_node`: `/approach` action server and approach state machine
+- `approach_controller_node`: PID conversion from `/approach/control_error` to
+  `/cmd_vel`
+- `approach_debug_logger_node`: per-action CSV, debug image, and PCD capture
+
+The legacy monolithic `approach_node` is still present in the package, but it is
+not used by `approach.launch.py`.
+
+```bash
+ros2 launch close_approach approach.launch.py
 ```
 
-- `measure_*.txt`: per-cycle sensor latency, processing time, total delay,
-  control interval, SE(2) error, velocity command, and processing-stage timing
-- `*_roi_filtered.pcd`: point cloud after ROI filtering and sensor fusion
-- `*_clustered.pcd`: point cloud after target cluster selection
-- `*_final.pcd`: point cloud after projection and front slicing
+The action interface remains:
+
+```bash
+ros2 action send_goal /approach inha_interfaces/action/Approach "{goal_distance: 0.3}" --feedback
+```
+
+## Error Flow
+
+Point-cloud distance error:
+
+```text
+/camera/camera_head/depth/color/points
+  -> pc_detector_node
+  -> /approach/pc_error
+  -> approach_manager_node
+  -> /approach/control_error.x_error
+  -> approach_controller_node
+  -> /cmd_vel.linear.x
+```
+
+Yaw error:
+
+```text
+/camera/camera_head/color/image_raw/compressed
+  -> edge_detector_node
+  -> /approach/edge_error.theta_error
+  -> approach_manager_node
+  -> /approach/control_error.theta_error
+  -> approach_controller_node
+  -> /cmd_vel.angular.z
+```
+
+`approach_head_control_node`, when started separately, listens to
+`/approach/_action/feedback`. It is compatible with the manager-based action
+server because the `/approach` action name, type, and feedback fields are kept.
+
+## Point-Cloud ROI
+
+`pc_detector_node` uses a trapezoid-like spatial ROI in `base_nav`.
+The near side has a smaller lateral half-width and the far side has a larger
+lateral half-width:
+
+```yaml
+roi_x_min: 0.1
+roi_x_max: 2.0
+roi_y_abs_near: 0.3
+roi_y_abs_max: 0.8
+roi_z_max: 1.5
+```
+
+The allowed `|y|` grows linearly from `roi_y_abs_near` to `roi_y_abs_max` as
+`x` increases. This reduces near-field robot/self clutter while keeping a wider
+search region for farther targets.
+
+The published `/approach/debug_cloud` is after downsampling, outlier removal,
+ground removal, spatial ROI, and optional LiDAR fusion. The published
+`/approach/filtered_cloud` is after clustering, projection to 2D, and front
+slicing, and is closer to the cloud used for OBB and `x_error` estimation.
+
+## Edge Detector Control
+
+`edge_detector_node` is disabled by default and avoids image decoding while
+disabled. `approach_manager_node` enables it at action start and disables it
+when the action stops through:
+
+```text
+/approach/edge_detector/set_enable
+```
+
+Manual control:
+
+```bash
+ros2 service call /approach/edge_detector/set_enable inha_interfaces/srv/SetEnable "{enable: true}"
+ros2 service call /approach/edge_detector/set_enable inha_interfaces/srv/SetEnable "{enable: false}"
+```
+
+The edge yaw gate is parameterized:
+
+```yaml
+max_abs_yaw_deg: 30.0
+```
+
+Only Hough line angles with `abs(angle) < max_abs_yaw_deg` are used for yaw
+estimation. The debug image topic is:
+
+```text
+/approach/edge_debug/compressed
+```
+
+# Logs
+## Approach debug logs
+
+`approach_debug_logger_node` writes one timestamped directory per action under
+`/home/thor/inha_log/module/close_approach` by default. The output path and
+topics are configured in `config/approach_debug_logger.yaml`.
+
+```text
+/home/thor/inha_log/module/close_approach/approach_YYYYMMDD_HHMMSS_mmm/
+├── samples.csv
+├── sample_000000.jpg
+├── sample_000000.pcd
+├── sample_000001.jpg
+└── sample_000001.pcd
+```
+
+- `samples.csv`: state, edge yaw, point-cloud error, control error, command
+  velocity, and paired image/PCD filenames
+- `sample_*.jpg`: latest compressed debug image from
+  `/approach/edge_debug/compressed`
+- `sample_*.pcd`: latest point cloud from the configured logger cloud topic,
+  `/approach/debug_cloud` by default
+
+To log the final cloud used closer to `x_error` estimation, set:
+
+```yaml
+cloud_topic: /approach/filtered_cloud
+```
 
 ## Retreat logs
 

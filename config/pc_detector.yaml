@@ -8,6 +8,7 @@ pc_detector:
 
     roi_x_min:    0.1
     roi_x_max:    2.0
+    roi_y_abs_near: 0.3
     roi_y_abs_max: 0.8
     roi_z_max:    1.5
 

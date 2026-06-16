@@ -9,8 +9,9 @@ edge_detector:
     min_length:   60
     max_gap:      15
 
-    roi_top_pct:   20
-    roi_bot_pct:   80
+    ## 이미지 비율
+    roi_top_pct:   50
+    roi_bot_pct:   100
     roi_left_pct:  20
     roi_right_pct: 80
 

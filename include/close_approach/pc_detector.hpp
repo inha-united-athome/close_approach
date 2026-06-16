@@ -58,7 +58,7 @@ private:
 
   // Params
   std::string cloud_topic_, lidar_topic_, info_topic_, target_frame_, odom_frame_;
-  float roi_x_min_, roi_x_max_, roi_y_abs_max_, roi_z_max_;
+  float roi_x_min_, roi_x_max_, roi_y_abs_near_, roi_y_abs_max_, roi_z_max_;
   float leaf_size_, stddev_mul_thresh_, ground_height_;
   int   mean_k_;
   float cluster_tolerance_, min_cluster_area_;

@@ -1,5 +1,6 @@
 #include "close_approach/pc_detector.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -10,13 +11,17 @@
 
 namespace {
 void applySpatialRoiBounds(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
-                           float x_min, float x_max,
-                           float y_abs_max, float z_max) {
+                           float x_min, float x_max, float y_abs_near,
+                           float y_abs_far, float z_max) {
   auto out = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
   out->points.reserve(cloud->points.size());
+  const float near_x = std::isfinite(x_min) ? x_min : 0.0F;
+  const float x_span = std::max(1e-3F, x_max - near_x);
   for (const auto &p : cloud->points) {
     if (p.x < x_min || p.x > x_max) continue;
-    if (std::abs(p.y) > y_abs_max)   continue;
+    const float t = std::clamp((p.x - near_x) / x_span, 0.0F, 1.0F);
+    const float y_abs_limit = y_abs_near + t * (y_abs_far - y_abs_near);
+    if (std::abs(p.y) > y_abs_limit) continue;
     if (p.z > z_max)                  continue;
     out->points.push_back(p);
   }
@@ -48,6 +53,7 @@ PCDetector::PCDetector()
   this->declare_parameter<std::string>("odom_frame",   "odom");
   this->declare_parameter<float>("roi_x_min",              0.1F);
   this->declare_parameter<float>("roi_x_max",              2.0F);
+  this->declare_parameter<float>("roi_y_abs_near",         0.3F);
   this->declare_parameter<float>("roi_y_abs_max",          0.8F);
   this->declare_parameter<float>("roi_z_max",              1.5F);
   this->declare_parameter<float>("leaf_size",              0.03F);
@@ -71,8 +77,11 @@ PCDetector::PCDetector()
   this->get_parameter("odom_frame",   odom_frame_);
   this->get_parameter("roi_x_min",            roi_x_min_);
   this->get_parameter("roi_x_max",            roi_x_max_);
+  this->get_parameter("roi_y_abs_near",       roi_y_abs_near_);
   this->get_parameter("roi_y_abs_max",        roi_y_abs_max_);
   this->get_parameter("roi_z_max",            roi_z_max_);
+  roi_y_abs_near_ = std::max(0.0F, roi_y_abs_near_);
+  roi_y_abs_max_ = std::max(roi_y_abs_near_, roi_y_abs_max_);
   this->get_parameter("leaf_size",            leaf_size_);
   this->get_parameter("mean_k",               mean_k_);
   this->get_parameter("stddev_mul_thresh",    stddev_mul_thresh_);
@@ -183,7 +192,8 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
 
   roi_filter_->remove_ground(cloud_, tf.transform);
   applySpatialRoiBounds(cloud_, -std::numeric_limits<float>::infinity(),
-                        roi_x_max_, roi_y_abs_max_, roi_z_max_);
+                        roi_x_max_, roi_y_abs_near_, roi_y_abs_max_,
+                        roi_z_max_);
 
   // LiDAR fusion
   {
@@ -311,7 +321,8 @@ bool PCDetector::getTransform(const std::string &tgt, const std::string &src,
 }
 
 void PCDetector::applySpatialRoi(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud) {
-  applySpatialRoiBounds(cloud, roi_x_min_, roi_x_max_, roi_y_abs_max_, roi_z_max_);
+  applySpatialRoiBounds(cloud, roi_x_min_, roi_x_max_, roi_y_abs_near_,
+                        roi_y_abs_max_, roi_z_max_);
 }
 
 bool PCDetector::captureAimAnchor(const TargetEdge &edge, const rclcpp::Time &stamp) {

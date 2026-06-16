@@ -3,12 +3,13 @@ approach_controller:
     kp_x:     0.25
     ki_x:     0.0
     kd_x:     0.0
-    kp_theta: 1.2
+    kp_theta: -1.2
     ki_theta: 0.0
     kd_theta: 0.0
 
     max_v: 0.10
     max_w: 0.20
+    debug_log: true
 
     decel_dist_max: 0.20   # m, 감속 구간 최대 길이
     decel_dist_min: 0.05   # m, 감속 구간 최소 길이

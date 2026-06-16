@@ -78,6 +78,7 @@ private:
   float pc_timeout_sec_;
   rclcpp::Time last_valid_pc_time_;
   std::string  odom_frame_, target_frame_;
+  bool debug_log_ = true;
 
   // Trail
   std::deque<geometry_msgs::msg::PoseStamped> trail_;

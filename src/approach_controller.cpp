@@ -16,6 +16,7 @@ ApproachController::ApproachController() : Node("approach_controller") {
   this->declare_parameter<float>("decel_dist_max",  0.20F);
   this->declare_parameter<float>("decel_dist_min",  0.05F);
   this->declare_parameter<float>("decel_ratio",     0.5F);
+  this->declare_parameter<bool>("debug_log",        true);
 
   this->get_parameter("kp_x",           kp_x_);
   this->get_parameter("ki_x",           ki_x_);
@@ -28,6 +29,7 @@ ApproachController::ApproachController() : Node("approach_controller") {
   this->get_parameter("decel_dist_max", decel_dist_max_);
   this->get_parameter("decel_dist_min", decel_dist_min_);
   this->get_parameter("decel_ratio",    decel_ratio_);
+  this->get_parameter("debug_log",      debug_log_);
 
   pid_ = std::make_shared<PIDController>();
   pid_->setParameters(kp_x_, 0.0F, kp_theta_,
@@ -103,6 +105,15 @@ void ApproachController::errorCallback(const ApproachError::ConstSharedPtr &msg)
 
   const auto cmd = pid_->compute_control(se2, dt, v_scale);
   cmd_vel_pub_->publish(cmd);
+
+  if (debug_log_) {
+    RCLCPP_INFO_THROTTLE(
+        this->get_logger(), *this->get_clock(), 300,
+        "control x=%.4f theta=%.4f rad (%.2f deg) dt=%.3f v_scale=%.2f -> vx=%.4f wz=%.4f",
+        se2.x, se2.degree_theta,
+        se2.degree_theta * 180.0f / static_cast<float>(M_PI), dt, v_scale,
+        cmd.linear.x, cmd.angular.z);
+  }
 }
 
 int main(int argc, char **argv) {

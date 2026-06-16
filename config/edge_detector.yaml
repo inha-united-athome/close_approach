@@ -13,3 +13,6 @@ edge_detector:
     roi_bot_pct:   80
     roi_left_pct:  20
     roi_right_pct: 80
+
+    debug_log: true
+    debug_image: true

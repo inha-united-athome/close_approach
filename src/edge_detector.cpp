@@ -15,6 +15,8 @@ EdgeDetector::EdgeDetector() : Node("edge_detector") {
   this->declare_parameter<int>("roi_bot_pct",   80);
   this->declare_parameter<int>("roi_left_pct",  20);
   this->declare_parameter<int>("roi_right_pct", 80);
+  this->declare_parameter<bool>("debug_log",    true);
+  this->declare_parameter<bool>("debug_image",  true);
 
   this->get_parameter("img_topic",    img_topic_);
   this->get_parameter("canny_low",    canny_low_);
@@ -26,6 +28,8 @@ EdgeDetector::EdgeDetector() : Node("edge_detector") {
   this->get_parameter("roi_bot_pct",  roi_bot_pct_);
   this->get_parameter("roi_left_pct", roi_left_pct_);
   this->get_parameter("roi_right_pct",roi_right_pct_);
+  this->get_parameter("debug_log",    debug_log_);
+  this->get_parameter("debug_image",  debug_image_);
 
   auto qos_be  = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort();
   auto qos_rel = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
@@ -37,6 +41,8 @@ EdgeDetector::EdgeDetector() : Node("edge_detector") {
       "/approach/active", qos_rel,
       std::bind(&EdgeDetector::activeCallback, this, std::placeholders::_1));
   error_pub_ = this->create_publisher<ApproachError>("/approach/edge_error", qos_rel);
+  debug_img_pub_ = this->create_publisher<sensor_msgs::msg::CompressedImage>(
+      "/approach/edge_debug/compressed", qos_be);
 
   RCLCPP_INFO(this->get_logger(), "EdgeDetector ready. img_topic=%s", img_topic_.c_str());
 }
@@ -78,26 +84,44 @@ void EdgeDetector::imgCallback(
   cv::HoughLinesP(edges, lines, 1, CV_PI / 180,
                   hough_thresh_, min_length_, max_gap_);
 
+  cv::Mat debug_frame;
+  if (debug_image_) {
+    debug_frame = frame.clone();
+    cv::rectangle(debug_frame, cv::Rect(rx1, ry1, rx2 - rx1, ry2 - ry1),
+                  cv::Scalar(255, 180, 0), 2);
+  }
+
   // Length-weighted angle & y accumulation for horizontal lines (|angle| < 50°)
   float w_sum = 0.0f, wa_sum = 0.0f, wy_sum = 0.0f;
+  int accepted_lines = 0;
   for (const auto &l : lines) {
     const float dx    = static_cast<float>(l[2] - l[0]);
     const float dy    = static_cast<float>(l[3] - l[1]);
     float angle = std::atan2(dy, dx) * 180.0f / CV_PI;
     if (angle >  90.0f) angle -= 180.0f;
     if (angle < -90.0f) angle += 180.0f;
-    if (std::abs(angle) >= 50.0f) continue;
+    const bool accepted = std::abs(angle) < 50.0f;
+
+    if (debug_image_) {
+      const cv::Scalar color =
+          accepted ? cv::Scalar(0, 255, 0) : cv::Scalar(120, 120, 120);
+      cv::line(debug_frame, cv::Point(l[0], l[1]), cv::Point(l[2], l[3]),
+               color, accepted ? 3 : 1, cv::LINE_AA);
+    }
+    if (!accepted) continue;
 
     const float len = std::hypot(dx, dy);
     const float my  = (l[1] + l[3]) * 0.5f;
     wa_sum += angle * len;
     wy_sum += my    * len;
     w_sum  += len;
+    ++accepted_lines;
   }
 
   ApproachError err;
   err.header.stamp = msg->header.stamp;
 
+  bool held_theta = false;
   if (w_sum > 0.0f) {
     const float yaw_deg = wa_sum / w_sum;
     last_theta_rad_    = yaw_deg * static_cast<float>(CV_PI) / 180.0f;
@@ -105,6 +129,7 @@ void EdgeDetector::imgCallback(
     err.mean_y_px      = wy_sum / w_sum;
   } else {
     err.mean_y_px = 0.0f;
+    held_theta = theta_initialized_;
   }
 
   err.valid       = theta_initialized_;
@@ -114,6 +139,33 @@ void EdgeDetector::imgCallback(
   err.initial_dist_m = 0.0f;
 
   error_pub_->publish(err);
+
+  if (debug_log_) {
+    RCLCPP_INFO_THROTTLE(
+        this->get_logger(), *this->get_clock(), 300,
+        "edge_yaw theta=%.4f rad (%.2f deg) valid=%d held=%d lines=%zu accepted=%d mean_y=%.1f",
+        err.theta_error, err.theta_error * 180.0f / static_cast<float>(CV_PI),
+        err.valid, held_theta, lines.size(), accepted_lines, err.mean_y_px);
+  }
+
+  if (debug_image_ && debug_img_pub_->get_subscription_count() > 0) {
+    const std::string label = cv::format(
+        "yaw %.2f deg | %.4f rad | valid %d | held %d | lines %d/%zu",
+        err.theta_error * 180.0f / static_cast<float>(CV_PI), err.theta_error,
+        err.valid, held_theta, accepted_lines, lines.size());
+    cv::putText(debug_frame, label, cv::Point(20, 40),
+                cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 255), 2,
+                cv::LINE_AA);
+
+    std::vector<uchar> encoded;
+    if (cv::imencode(".jpg", debug_frame, encoded)) {
+      sensor_msgs::msg::CompressedImage out;
+      out.header = msg->header;
+      out.format = "jpeg";
+      out.data.assign(encoded.begin(), encoded.end());
+      debug_img_pub_->publish(out);
+    }
+  }
 }
 
 int main(int argc, char **argv) {

@@ -16,6 +16,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr img_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr               active_sub_;
   rclcpp::Publisher<ApproachError>::SharedPtr                        error_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr     debug_img_pub_;
 
   std::string img_topic_;
 
@@ -29,6 +30,8 @@ private:
   int roi_bot_pct_  = 80;
   int roi_left_pct_ = 20;
   int roi_right_pct_= 80;
+  bool debug_log_   = true;
+  bool debug_image_ = true;
 
   // Last valid theta (rad) — held when no horizontal edges found
   float last_theta_rad_    = 0.0f;

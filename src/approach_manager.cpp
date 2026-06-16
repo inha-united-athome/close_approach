@@ -20,6 +20,7 @@ ApproachManager::ApproachManager()
   this->declare_parameter<float>("trail_min_yaw",      0.052F);
   this->declare_parameter<std::string>("target_frame", "base_nav");
   this->declare_parameter<std::string>("odom_frame",   "odom");
+  this->declare_parameter<bool>("debug_log",           true);
 
   this->get_parameter("tol_x",              tol_x_);
   this->get_parameter("tol_theta",          tol_theta_);
@@ -30,6 +31,7 @@ ApproachManager::ApproachManager()
   this->get_parameter("trail_min_yaw",      trail_min_yaw_);
   this->get_parameter("target_frame",       target_frame_);
   this->get_parameter("odom_frame",         odom_frame_);
+  this->get_parameter("debug_log",          debug_log_);
 
   auto qos_rel = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
 
@@ -48,6 +50,14 @@ ApproachManager::ApproachManager()
         if (msg->valid) {
           last_theta_rad_    = msg->theta_error;
           theta_initialized_ = true;
+        }
+        if (debug_log_) {
+          RCLCPP_INFO_THROTTLE(
+              this->get_logger(), *this->get_clock(), 300,
+              "edge_error rx valid=%d theta=%.4f rad (%.2f deg) initialized=%d mean_y=%.1f",
+              msg->valid, msg->theta_error,
+              msg->theta_error * 180.0f / static_cast<float>(M_PI),
+              theta_initialized_, msg->mean_y_px);
         }
       });
 
@@ -187,6 +197,13 @@ void ApproachManager::stateMachineCallback() {
       : (now - last_valid_pc_time_).seconds() > static_cast<double>(pc_timeout_sec_);
 
   const float theta_err = last_theta_rad_;
+  if (debug_log_) {
+    RCLCPP_INFO_THROTTLE(
+        this->get_logger(), *this->get_clock(), 300,
+        "manager state=%s x_valid=%d x=%.4f theta=%.4f rad (%.2f deg) theta_init=%d",
+        stateStr(), x_valid, x_err, theta_err,
+        theta_err * 180.0f / static_cast<float>(M_PI), theta_initialized_);
+  }
 
   // Build control_error to send to controller
   ApproachError ctrl;

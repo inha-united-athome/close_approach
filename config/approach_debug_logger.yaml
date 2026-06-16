@@ -1,0 +1,10 @@
+approach_debug_logger:
+  ros__parameters:
+    output_dir: /home/thor/inha_log/module/close_approach
+    sample_period_sec: 0.5
+
+    save_images: true
+    save_pcd: true
+
+    image_topic: /approach/edge_debug/compressed
+    cloud_topic: /approach/debug_cloud

@@ -138,6 +138,10 @@ add_executable(approach_controller_node
   src/pid_controller.cpp
 )
 
+add_executable(approach_debug_logger_node
+  src/approach_debug_logger.cpp
+)
+
 # =========================
 # Include directories
 # =========================
@@ -224,6 +228,13 @@ target_include_directories(approach_controller_node
     ${EIGEN3_INCLUDE_DIR}
 )
 
+target_include_directories(approach_debug_logger_node
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+    ${PCL_INCLUDE_DIRS}
+)
+
 # =========================
 # C++ standard
 # =========================
@@ -239,6 +250,7 @@ target_compile_features(pc_detector_node PUBLIC cxx_std_17)
 target_compile_features(edge_detector_node PUBLIC cxx_std_17)
 target_compile_features(approach_manager_node PUBLIC cxx_std_17)
 target_compile_features(approach_controller_node PUBLIC cxx_std_17)
+target_compile_features(approach_debug_logger_node PUBLIC cxx_std_17)
 
 # =========================
 # ament dependencies
@@ -377,6 +389,14 @@ ament_target_dependencies(approach_controller_node
   geometry_msgs
 )
 
+ament_target_dependencies(approach_debug_logger_node
+  rclcpp
+  std_msgs
+  geometry_msgs
+  sensor_msgs
+  pcl_conversions
+)
+
 # =========================
 # External libraries
 # =========================
@@ -417,6 +437,11 @@ target_link_libraries(pc_detector_node
 
 target_link_libraries(edge_detector_node
   ${OpenCV_LIBS}
+)
+
+target_link_libraries(approach_debug_logger_node
+  ${PCL_LIBRARIES}
+  ${PCL_IO_LIBRARIES}
 )
 
 # tf2_geometry_msgs 직접 링크 보강
@@ -478,7 +503,8 @@ rosidl_get_typesupport_target(cpp_typesupport_target
   ${PROJECT_NAME} rosidl_typesupport_cpp)
 
 foreach(_target pc_detector_node edge_detector_node
-                approach_manager_node approach_controller_node)
+                approach_manager_node approach_controller_node
+                approach_debug_logger_node)
   target_link_libraries(${_target} "${cpp_typesupport_target}")
 endforeach()
 
@@ -505,6 +531,11 @@ target_compile_definitions(align_to_person_node
     ${PCL_DEFINITIONS}
 )
 
+target_compile_definitions(approach_debug_logger_node
+  PRIVATE
+    ${PCL_DEFINITIONS}
+)
+
 # =========================
 # Install
 # =========================
@@ -522,6 +553,7 @@ install(
     edge_detector_node
     approach_manager_node
     approach_controller_node
+    approach_debug_logger_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

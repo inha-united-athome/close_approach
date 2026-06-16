@@ -26,6 +26,7 @@ private:
   float kp_theta_, ki_theta_, kd_theta_;
   float max_v_, max_w_;
   float decel_dist_max_, decel_dist_min_, decel_ratio_;
+  bool debug_log_ = true;
 
   // Runtime state
   float initial_dist_    = 0.0f;

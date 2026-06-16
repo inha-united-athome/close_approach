@@ -12,6 +12,7 @@ def generate_launch_description():
     cfg_edge    = PathJoinSubstitution([pkg, "config", "edge_detector.yaml"])
     cfg_manager = PathJoinSubstitution([pkg, "config", "approach_manager.yaml"])
     cfg_ctrl    = PathJoinSubstitution([pkg, "config", "approach_controller.yaml"])
+    cfg_logger  = PathJoinSubstitution([pkg, "config", "approach_debug_logger.yaml"])
 
     return LaunchDescription([
         # ── 포인트클라우드 기반 종방향(x) 오차 검출 ──────────────────────
@@ -47,6 +48,15 @@ def generate_launch_description():
             executable="approach_controller_node",
             name="approach_controller",
             parameters=[cfg_ctrl],
+            output="screen",
+        ),
+
+        # ── 접근 1회 단위 CSV + 이미지/PCD 디버그 저장 ─────────────────
+        Node(
+            package="close_approach",
+            executable="approach_debug_logger_node",
+            name="approach_debug_logger",
+            parameters=[cfg_logger],
             output="screen",
         ),
     ])

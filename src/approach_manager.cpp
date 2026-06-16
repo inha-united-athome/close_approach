@@ -1,5 +1,6 @@
 #include "close_approach/approach_manager.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <thread>
 
@@ -20,6 +21,8 @@ ApproachManager::ApproachManager()
   this->declare_parameter<float>("trail_min_yaw",      0.052F);
   this->declare_parameter<std::string>("target_frame", "base_nav");
   this->declare_parameter<std::string>("odom_frame",   "odom");
+  this->declare_parameter<std::string>("edge_enable_service_name",
+                                       "/approach/edge_detector/set_enable");
   this->declare_parameter<bool>("debug_log",           true);
 
   this->get_parameter("tol_x",              tol_x_);
@@ -31,6 +34,7 @@ ApproachManager::ApproachManager()
   this->get_parameter("trail_min_yaw",      trail_min_yaw_);
   this->get_parameter("target_frame",       target_frame_);
   this->get_parameter("odom_frame",         odom_frame_);
+  this->get_parameter("edge_enable_service_name", edge_enable_service_name_);
   this->get_parameter("debug_log",          debug_log_);
 
   auto qos_rel = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
@@ -76,6 +80,9 @@ ApproachManager::ApproachManager()
 
   state_pub_ = this->create_publisher<std_msgs::msg::String>(
       "/approach/state", qos_rel);
+  edge_enable_client_ =
+      this->create_client<inha_interfaces::srv::SetEnable>(
+          edge_enable_service_name_);
 
   // Action server
   action_server_ = rclcpp_action::create_server<Approach>(
@@ -358,6 +365,8 @@ void ApproachManager::startApproach(float standoff) {
   }
 
   approach_active_ = true;
+  setEdgeDetectorEnabled(true);
+
   std_msgs::msg::Bool active_msg;
   active_msg.data = true;
   active_pub_->publish(active_msg);
@@ -366,6 +375,8 @@ void ApproachManager::startApproach(float standoff) {
 }
 
 void ApproachManager::stopApproach() {
+  setEdgeDetectorEnabled(false);
+
   approach_active_ = false;
   state_           = State::IDLE;
 
@@ -375,6 +386,26 @@ void ApproachManager::stopApproach() {
 
   publishTrail();
   RCLCPP_INFO(this->get_logger(), "Approach stopped");
+}
+
+void ApproachManager::setEdgeDetectorEnabled(bool enabled) {
+  if (!edge_enable_client_) {
+    return;
+  }
+
+  if (!edge_enable_client_->wait_for_service(std::chrono::milliseconds(300))) {
+    RCLCPP_WARN(this->get_logger(),
+                "Edge detector enable service unavailable: %s",
+                edge_enable_service_name_.c_str());
+    return;
+  }
+
+  auto req = std::make_shared<inha_interfaces::srv::SetEnable::Request>();
+  req->enable = enabled;
+  auto future = edge_enable_client_->async_send_request(req);
+  (void)future;
+  RCLCPP_INFO(this->get_logger(), "Requested edge detector %s",
+              enabled ? "enable" : "disable");
 }
 
 const char *ApproachManager::stateStr() const {

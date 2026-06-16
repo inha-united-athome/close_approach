@@ -14,5 +14,8 @@ edge_detector:
     roi_left_pct:  20
     roi_right_pct: 80
 
+    max_abs_yaw_deg: 30.0
+    enable_service_name: /approach/edge_detector/set_enable
+
     debug_log: true
     debug_image: true

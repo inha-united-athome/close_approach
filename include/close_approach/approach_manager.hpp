@@ -9,6 +9,7 @@
 #include <string>
 
 #include "inha_interfaces/action/approach.hpp"
+#include "inha_interfaces/srv/set_enable.hpp"
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -47,6 +48,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr  active_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr  trail_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;
+  rclcpp::Client<inha_interfaces::srv::SetEnable>::SharedPtr edge_enable_client_;
 
   // Timers
   rclcpp::TimerBase::SharedPtr state_timer_;
@@ -78,6 +80,7 @@ private:
   float pc_timeout_sec_;
   rclcpp::Time last_valid_pc_time_;
   std::string  odom_frame_, target_frame_;
+  std::string  edge_enable_service_name_;
   bool debug_log_ = true;
 
   // Trail
@@ -94,5 +97,6 @@ private:
   void publishTrail();
   void startApproach(float standoff);
   void stopApproach();
+  void setEdgeDetectorEnabled(bool enabled);
   const char *stateStr() const;
 };

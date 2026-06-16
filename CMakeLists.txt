@@ -369,6 +369,7 @@ ament_target_dependencies(edge_detector_node
   rclcpp
   std_msgs
   sensor_msgs
+  inha_interfaces
 )
 
 ament_target_dependencies(approach_manager_node

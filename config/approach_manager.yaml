@@ -2,6 +2,7 @@ approach_manager:
   ros__parameters:
     target_frame: "base_nav"
     odom_frame:   "odom"
+    edge_enable_service_name: "/approach/edge_detector/set_enable"
 
     tol_x:              0.03   # m
     tol_theta:          0.08   # rad (~4.5°)

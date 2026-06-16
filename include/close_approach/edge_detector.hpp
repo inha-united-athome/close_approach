@@ -2,6 +2,8 @@
 
 #include "close_approach/msg/approach_error.hpp"
 
+#include <atomic>
+#include <inha_interfaces/srv/set_enable.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
 #include <std_msgs/msg/bool.hpp>
@@ -17,8 +19,10 @@ private:
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr               active_sub_;
   rclcpp::Publisher<ApproachError>::SharedPtr                        error_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr     debug_img_pub_;
+  rclcpp::Service<inha_interfaces::srv::SetEnable>::SharedPtr         enable_srv_;
 
   std::string img_topic_;
+  std::string enable_service_name_;
 
   // Edge detection params (loaded from YAML, matches edge_yaw_viewer saved format)
   int canny_low_    = 50;
@@ -30,8 +34,10 @@ private:
   int roi_bot_pct_  = 80;
   int roi_left_pct_ = 20;
   int roi_right_pct_= 80;
+  float max_abs_yaw_deg_ = 30.0f;
   bool debug_log_   = true;
   bool debug_image_ = true;
+  std::atomic<bool> enabled_{false};
 
   // Last valid theta (rad) — held when no horizontal edges found
   float last_theta_rad_    = 0.0f;
@@ -39,4 +45,5 @@ private:
 
   void imgCallback(const sensor_msgs::msg::CompressedImage::ConstSharedPtr &msg);
   void activeCallback(const std_msgs::msg::Bool::SharedPtr msg);
+  void resetTheta();
 };

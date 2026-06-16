@@ -1,5 +1,6 @@
 #include "close_approach/edge_detector.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <opencv2/opencv.hpp>
 
@@ -15,6 +16,9 @@ EdgeDetector::EdgeDetector() : Node("edge_detector") {
   this->declare_parameter<int>("roi_bot_pct",   80);
   this->declare_parameter<int>("roi_left_pct",  20);
   this->declare_parameter<int>("roi_right_pct", 80);
+  this->declare_parameter<float>("max_abs_yaw_deg", 30.0f);
+  this->declare_parameter<std::string>("enable_service_name",
+                                       "/approach/edge_detector/set_enable");
   this->declare_parameter<bool>("debug_log",    true);
   this->declare_parameter<bool>("debug_image",  true);
 
@@ -28,8 +32,11 @@ EdgeDetector::EdgeDetector() : Node("edge_detector") {
   this->get_parameter("roi_bot_pct",  roi_bot_pct_);
   this->get_parameter("roi_left_pct", roi_left_pct_);
   this->get_parameter("roi_right_pct",roi_right_pct_);
+  this->get_parameter("max_abs_yaw_deg", max_abs_yaw_deg_);
+  this->get_parameter("enable_service_name", enable_service_name_);
   this->get_parameter("debug_log",    debug_log_);
   this->get_parameter("debug_image",  debug_image_);
+  max_abs_yaw_deg_ = std::clamp(max_abs_yaw_deg_, 0.0f, 90.0f);
 
   auto qos_be  = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort();
   auto qos_rel = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
@@ -43,19 +50,35 @@ EdgeDetector::EdgeDetector() : Node("edge_detector") {
   error_pub_ = this->create_publisher<ApproachError>("/approach/edge_error", qos_rel);
   debug_img_pub_ = this->create_publisher<sensor_msgs::msg::CompressedImage>(
       "/approach/edge_debug/compressed", qos_be);
+  enable_srv_ = this->create_service<inha_interfaces::srv::SetEnable>(
+      enable_service_name_,
+      [this](const std::shared_ptr<inha_interfaces::srv::SetEnable::Request> req,
+             std::shared_ptr<inha_interfaces::srv::SetEnable::Response> resp) {
+        enabled_.store(req->enable, std::memory_order_release);
+        resetTheta();
+        resp->success = true;
+        resp->message = req->enable ? "edge detector enabled"
+                                    : "edge detector disabled";
+        RCLCPP_INFO(this->get_logger(), "%s", resp->message.c_str());
+      });
 
-  RCLCPP_INFO(this->get_logger(), "EdgeDetector ready. img_topic=%s", img_topic_.c_str());
+  RCLCPP_INFO(this->get_logger(),
+              "EdgeDetector ready. img_topic=%s enable_service=%s max_abs_yaw=%.1f deg",
+              img_topic_.c_str(), enable_service_name_.c_str(),
+              max_abs_yaw_deg_);
 }
 
 void EdgeDetector::activeCallback(const std_msgs::msg::Bool::SharedPtr msg) {
   if (msg->data) {
-    last_theta_rad_    = 0.0f;
-    theta_initialized_ = false;
+    resetTheta();
   }
 }
 
 void EdgeDetector::imgCallback(
     const sensor_msgs::msg::CompressedImage::ConstSharedPtr &msg) {
+  if (!enabled_.load(std::memory_order_acquire)) {
+    return;
+  }
 
   cv::Mat frame = cv::imdecode(msg->data, cv::IMREAD_COLOR);
   if (frame.empty()) return;
@@ -100,7 +123,7 @@ void EdgeDetector::imgCallback(
     float angle = std::atan2(dy, dx) * 180.0f / CV_PI;
     if (angle >  90.0f) angle -= 180.0f;
     if (angle < -90.0f) angle += 180.0f;
-    const bool accepted = std::abs(angle) < 50.0f;
+    const bool accepted = std::abs(angle) < max_abs_yaw_deg_;
 
     if (debug_image_) {
       const cv::Scalar color =
@@ -166,6 +189,11 @@ void EdgeDetector::imgCallback(
       debug_img_pub_->publish(out);
     }
   }
+}
+
+void EdgeDetector::resetTheta() {
+  last_theta_rad_ = 0.0f;
+  theta_initialized_ = false;
 }
 
 int main(int argc, char **argv) {

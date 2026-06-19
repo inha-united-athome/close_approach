@@ -1,6 +1,6 @@
 approach_controller:
   ros__parameters:
-    kp_x:     0.25
+    kp_x:     0.5
     ki_x:     0.0
     kd_x:     0.0
     kp_theta: -1.2
@@ -11,6 +11,6 @@ approach_controller:
     max_w: 0.20
     debug_log: true
 
-    decel_dist_max: 0.20   # m, 감속 구간 최대 길이
-    decel_dist_min: 0.05   # m, 감속 구간 최소 길이
-    decel_ratio:    0.5    # initial_dist 대비 감속 구간 비율
+    decel_dist_max: 0.15   # m, 감속 구간 최대 길이 (0.20→0.10: 감속 구간 절반)
+    decel_dist_min: 0.04   # m, 감속 구간 최소 길이
+    decel_ratio:    0.3    # initial_dist 대비 감속 구간 비율 (0.5→0.3: 더 늦게 감속 시작)

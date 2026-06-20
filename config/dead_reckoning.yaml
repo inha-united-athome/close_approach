@@ -12,7 +12,7 @@ dead_reckoning_approach_node:
 
     max_v:  0.20             # m/s, 최대 직진 속도
     min_v:  0.01             # m/s, 최소 직진 속도
-    max_w:  0.20             # rad/s, 최대 회전 속도
+    max_w:  0.60             # rad/s, 최대 회전 속도
 
     # 상대 yaw 데드레코닝 회전 (+반시계 / -시계)
     max_rotation_rad:       3.14159
@@ -24,7 +24,7 @@ dead_reckoning_approach_node:
     accel_limit:  0.20       # m/s², 가속 (0→max_v 약 1.0초)
     decel_limit:  0.80       # m/s², 감속
 
-    kp_distance:  1.5        # 잔여 거리 → 목표 속도 비례 게인
+    kp_distance:  1.0       # 잔여 거리 → 목표 속도 비례 게인
     kp_lateral:   1.0        # 횡방향 오차 → 회전 보정 게인
     kp_yaw:       1.2        # yaw 오차 → 회전 보정 게인
 

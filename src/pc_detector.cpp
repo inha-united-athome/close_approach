@@ -115,7 +115,7 @@ PCDetector::PCDetector()
   this->declare_parameter<float>("target_standoff_distance", 0.3F);
   this->declare_parameter<float>("front_slice_ratio",       0.05F);
   this->declare_parameter<int>  ("front_min_points",        5);
-  this->declare_parameter<float>("x_ema_alpha",             0.35F);
+  this->declare_parameter<float>("x_ema_alpha",             0.80F);
   this->declare_parameter<float>("spike_dx_max",            0.15F);
   this->declare_parameter<int>  ("max_consecutive_outliers", 5);
   this->declare_parameter<float>("lidar_max_age_sec",      0.3F);
@@ -195,9 +195,20 @@ void PCDetector::activeCallback(const std_msgs::msg::Bool::SharedPtr msg) {
     consecutive_outliers_= 0;
     RCLCPP_INFO(this->get_logger(), "Active: aim anchor reset");
   } else if (was_active && !msg->data) {
-    std::lock_guard<std::mutex> lk(lidar_mutex_);
-    lidar_cache_.reset();
-    RCLCPP_INFO(this->get_logger(), "Inactive: point-cloud processing stopped");
+    aim_anchor_captured_ = false;
+    initial_dist_ = 0.0F;
+    se2_initialized_ = false;
+    se2_cached_ = {0.0F, 0.0F, 0.0F};
+    consecutive_outliers_ = 0;
+    cloud_.reset();
+    kdtree_.reset();
+    {
+      std::lock_guard<std::mutex> lk(lidar_mutex_);
+      lidar_cache_.reset();
+      lidar_stamp_ = rclcpp::Time(0, 0, this->get_clock()->get_clock_type());
+    }
+    RCLCPP_INFO(this->get_logger(),
+                "Inactive: all point-cloud estimator caches cleared");
   }
 }
 
@@ -361,6 +372,18 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
       if (++consecutive_outliers_ >= max_consecutive_outliers_) {
         se2_cached_           = candidate;
         consecutive_outliers_ = 0;
+      } else {
+        if (debug_log_) {
+          RCLCPP_WARN_THROTTLE(
+              this->get_logger(), *this->get_clock(), 500,
+              "Rejecting x spike: cached=%.3f candidate=%.3f count=%d/%d",
+              se2_cached_.x, candidate.x, consecutive_outliers_,
+              max_consecutive_outliers_);
+        }
+        // Never publish the stale cached x as valid while a large change is
+        // being verified. The manager will hold the robot instead.
+        publishInvalid();
+        return;
       }
     } else {
       se2_cached_.x = x_ema_alpha_ * candidate.x +

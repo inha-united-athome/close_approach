@@ -52,16 +52,23 @@ ApproachController::ApproachController() : Node("approach_controller") {
 }
 
 void ApproachController::activeCallback(const std_msgs::msg::Bool::SharedPtr msg) {
+  // Reset both longitudinal and yaw PID state on every action boundary.
+  // This prevents integral/derivative history or deceleration state from
+  // leaking across success, failure, cancellation, or a new goal.
+  pid_->reset();
+  initial_dist_set_ = false;
+  initial_dist_     = 0.0f;
+  prev_time_valid_  = false;
+
   if (msg->data) {
-    // Approach just started — reset PID and initial distance
-    pid_->reset();
-    initial_dist_set_ = false;
-    initial_dist_     = 0.0f;
-    prev_time_valid_  = false;
+    RCLCPP_INFO(this->get_logger(),
+                "Approach active: longitudinal/yaw controller reset");
   } else {
-    // Approach stopped — publish stop
+    // Approach stopped — reset completed above, then command an explicit stop.
     geometry_msgs::msg::Twist stop;
     cmd_vel_pub_->publish(stop);
+    RCLCPP_INFO(this->get_logger(),
+                "Approach inactive: controller reset and stop published");
   }
 }
 

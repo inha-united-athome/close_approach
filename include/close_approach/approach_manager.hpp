@@ -68,6 +68,8 @@ private:
   State       state_               = State::IDLE;
   rclcpp::Time dwell_start_;
   rclcpp::Time align_start_;
+  rclcpp::Time x_converged_since_;
+  bool         x_convergence_pending_ = false;
   bool         post_align_done_    = false;
   float        initial_dist_       = 0.0f;
   bool         initial_dist_set_   = false;
@@ -76,6 +78,7 @@ private:
   // Params
   float tol_x_, tol_theta_;
   float dwell_duration_sec_, align_timeout_sec_;
+  float x_converged_hold_sec_;
   float trail_min_dist_, trail_min_yaw_;
   float pc_timeout_sec_;
   rclcpp::Time last_valid_pc_time_;

@@ -17,6 +17,7 @@ ApproachManager::ApproachManager()
   this->declare_parameter<float>("dwell_duration_sec", 2.0F);
   this->declare_parameter<float>("align_timeout_sec",  5.0F);
   this->declare_parameter<float>("pc_timeout_sec",     2.0F);
+  this->declare_parameter<float>("x_converged_hold_sec", 0.5F);
   this->declare_parameter<float>("trail_min_dist",     0.03F);
   this->declare_parameter<float>("trail_min_yaw",      0.052F);
   this->declare_parameter<std::string>("target_frame", "base_nav");
@@ -30,6 +31,7 @@ ApproachManager::ApproachManager()
   this->get_parameter("dwell_duration_sec", dwell_duration_sec_);
   this->get_parameter("align_timeout_sec",  align_timeout_sec_);
   this->get_parameter("pc_timeout_sec",     pc_timeout_sec_);
+  this->get_parameter("x_converged_hold_sec", x_converged_hold_sec_);
   this->get_parameter("trail_min_dist",     trail_min_dist_);
   this->get_parameter("trail_min_yaw",      trail_min_yaw_);
   this->get_parameter("target_frame",       target_frame_);
@@ -241,7 +243,25 @@ void ApproachManager::stateMachineCallback() {
         action_failed_ = true;
         break;
       }
-      if (x_valid && std::abs(x_err) < tol_x_) {
+      if (!x_valid || std::abs(x_err) >= tol_x_) {
+        x_convergence_pending_ = false;
+        break;
+      }
+
+      if (!x_convergence_pending_) {
+        x_convergence_pending_ = true;
+        x_converged_since_ = now;
+        RCLCPP_INFO(this->get_logger(),
+                    "Longitudinal tolerance entered: x=%.3f, verifying %.2fs",
+                    x_err, x_converged_hold_sec_);
+        break;
+      }
+      if ((now - x_converged_since_).seconds() <
+          static_cast<double>(x_converged_hold_sec_)) {
+        break;
+      }
+
+      {
         if (theta_initialized_ && std::abs(theta_err) < tol_theta_) {
           RCLCPP_INFO(this->get_logger(), "APPROACH → DWELL (x=%.3f θ=%.3f)",
                       x_err, theta_err);
@@ -262,7 +282,12 @@ void ApproachManager::stateMachineCallback() {
       ctrl.valid   = true;
       control_error_pub_->publish(ctrl);
 
-      if (pc_timed_out) {
+      if (x_valid && std::abs(x_err) >= tol_x_) {
+        x_convergence_pending_ = false;
+        RCLCPP_WARN(this->get_logger(),
+                    "ALIGN_THETA → APPROACH (x moved out: %.3f)", x_err);
+        state_ = State::APPROACH;
+      } else if (pc_timed_out) {
         RCLCPP_ERROR(this->get_logger(),
                      "PC timeout in ALIGN_THETA → action failed");
         action_failed_ = true;
@@ -272,15 +297,9 @@ void ApproachManager::stateMachineCallback() {
           // an aligned image alone.
           break;
         }
-        if (std::abs(x_err) >= tol_x_) {
-          post_align_done_ = true;
-          RCLCPP_INFO(this->get_logger(), "ALIGN_THETA → APPROACH recheck");
-          state_ = State::APPROACH;
-        } else {
-          RCLCPP_INFO(this->get_logger(), "ALIGN_THETA → DWELL");
-          state_       = State::DWELL;
-          dwell_start_ = now;
-        }
+        RCLCPP_INFO(this->get_logger(), "ALIGN_THETA → DWELL");
+        state_       = State::DWELL;
+        dwell_start_ = now;
       } else if ((now - align_start_).seconds() > static_cast<double>(align_timeout_sec_)) {
         RCLCPP_ERROR(this->get_logger(), "ALIGN_THETA timeout → action failed");
         action_failed_ = true;
@@ -307,6 +326,7 @@ void ApproachManager::stateMachineCallback() {
         RCLCPP_WARN(this->get_logger(), "DWELL → APPROACH (x drift %.3f)",
                     x_err);
         state_ = State::APPROACH;
+        x_convergence_pending_ = false;
         break;
       }
       if (std::abs(theta_err) >= tol_theta_) {
@@ -391,7 +411,13 @@ void ApproachManager::startApproach(float standoff) {
   action_failed_       = false;
   theta_initialized_   = false;
   last_theta_rad_      = 0.0f;
+  x_convergence_pending_ = false;
   last_valid_pc_time_  = this->now();
+
+  {
+    std::lock_guard<std::mutex> lk(pc_mutex_);
+    latest_pc_error_.reset();
+  }
 
   {
     std::lock_guard<std::mutex> lk(trail_mutex_);
@@ -413,6 +439,20 @@ void ApproachManager::stopApproach() {
 
   approach_active_ = false;
   state_           = State::IDLE;
+
+  // Every terminal path (success/failure/cancel/shutdown) comes through here.
+  // Never let a following action inherit sensor or convergence state.
+  {
+    std::lock_guard<std::mutex> lk(pc_mutex_);
+    latest_pc_error_.reset();
+    last_valid_pc_time_ = this->now();
+  }
+  theta_initialized_ = false;
+  last_theta_rad_ = 0.0F;
+  initial_dist_set_ = false;
+  initial_dist_ = 0.0F;
+  x_convergence_pending_ = false;
+  post_align_done_ = false;
 
   std_msgs::msg::Bool active_msg;
   active_msg.data = false;

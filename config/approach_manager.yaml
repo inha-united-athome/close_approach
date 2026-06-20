@@ -9,6 +9,7 @@ approach_manager:
     dwell_duration_sec: 2.0
     align_timeout_sec:  5.0
     pc_timeout_sec:     2.0    # fresh PC x가 이 시간 없으면 action fail
+    x_converged_hold_sec: 0.5  # x 허용범위가 연속으로 유지돼야 상태 전환
     debug_log:          true
 
     trail_min_dist: 0.03       # m

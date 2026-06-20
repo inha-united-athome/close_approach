@@ -10,7 +10,7 @@ dead_reckoning_approach_node:
     min_goal_distance: 0.01   # m, 이 미만은 goal reject
     goal_tolerance:    0.01   # m, 도달 판정 잔여 거리
 
-    max_v:  0.30             # m/s, 최대 직진 속도
+    max_v:  0.20             # m/s, 최대 직진 속도
     min_v:  0.01             # m/s, 최소 직진 속도
     max_w:  0.20             # rad/s, 최대 회전 속도
 
@@ -21,14 +21,14 @@ dead_reckoning_approach_node:
     min_rotation_w:         0.05
     rotation_accel_limit:   0.40
 
-    accel_limit:  0.20       # m/s², 가속 (0→max_v 약 1.5초)
-    decel_limit:  0.80       # m/s², 감속 (조건: ≥ kp_distance×max_v=0.24 ✓)
+    accel_limit:  0.20       # m/s², 가속 (0→max_v 약 1.0초)
+    decel_limit:  0.80       # m/s², 감속
 
     kp_distance:  1.5        # 잔여 거리 → 목표 속도 비례 게인
     kp_lateral:   1.0        # 횡방향 오차 → 회전 보정 게인
     kp_yaw:       1.2        # yaw 오차 → 회전 보정 게인
 
-    slow_down_distance: 0.20 # m, 감속 구간 (조건: ≥ max_v²/2a=0.09m ✓)
+    slow_down_distance: 0.20 # m, 목표 20cm 전부터 감속
 
     control_rate_hz:    20.0
     timeout_margin_sec: 10.0   # 예상 소요 시간 + 이 값 = timeout

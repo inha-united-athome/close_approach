@@ -27,7 +27,7 @@ pc_detector:
     # median x만 종방향 오차로 사용한다. y 오차는 항상 0이다.
     front_slice_ratio: 0.05
     front_min_points:  5
-    x_ema_alpha:       0.35
+    x_ema_alpha:       0.80  # 새 측정값 비중; 1.0이면 EMA 비활성
     spike_dx_max:      0.15
 
     max_consecutive_outliers: 5

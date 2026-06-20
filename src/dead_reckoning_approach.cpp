@@ -7,6 +7,7 @@
 #include <functional>
 #include <iomanip>
 #include <sstream>
+#include <system_error>
 #include <thread>
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -58,6 +59,8 @@ DeadReckoningApproachNode::DeadReckoningApproachNode()
       tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_) {
   this->declare_parameter<std::string>("action_name",
                                        "dead_reckoning_approach");
+  this->declare_parameter<std::string>("rotate_action_name",
+                                       "dead_reckoning_rotate");
   this->declare_parameter<std::string>("odom_frame", "odom");
   this->declare_parameter<std::string>("robot_frame", "base_nav");
   this->declare_parameter<std::string>("cmd_vel_topic", "/cmd_vel");
@@ -75,11 +78,17 @@ DeadReckoningApproachNode::DeadReckoningApproachNode()
   this->declare_parameter<float>("slow_down_distance", 0.08F);
   this->declare_parameter<float>("control_rate_hz", 20.0F);
   this->declare_parameter<float>("timeout_margin_sec", 3.0F);
+  this->declare_parameter<float>("max_rotation_rad", 3.1415927F);
+  this->declare_parameter<float>("min_rotation_rad", 0.01F);
+  this->declare_parameter<float>("rotation_tolerance_rad", 0.02F);
+  this->declare_parameter<float>("min_rotation_w", 0.05F);
+  this->declare_parameter<float>("rotation_accel_limit", 0.4F);
   this->declare_parameter<bool>("log_enabled", true);
   this->declare_parameter<std::string>(
       "log_dir", "/home/thor/inha_logs/module/close_approach/dead_reckoning");
 
   this->get_parameter("action_name", action_name_);
+  this->get_parameter("rotate_action_name", rotate_action_name_);
   this->get_parameter("odom_frame", odom_frame_);
   this->get_parameter("robot_frame", robot_frame_);
   this->get_parameter("cmd_vel_topic", cmd_vel_topic_);
@@ -97,15 +106,40 @@ DeadReckoningApproachNode::DeadReckoningApproachNode()
   this->get_parameter("slow_down_distance", slow_down_distance_);
   this->get_parameter("control_rate_hz", control_rate_hz_);
   this->get_parameter("timeout_margin_sec", timeout_margin_sec_);
+  this->get_parameter("max_rotation_rad", max_rotation_rad_);
+  this->get_parameter("min_rotation_rad", min_rotation_rad_);
+  this->get_parameter("rotation_tolerance_rad", rotation_tolerance_rad_);
+  this->get_parameter("min_rotation_w", min_rotation_w_);
+  this->get_parameter("rotation_accel_limit", rotation_accel_limit_);
   this->get_parameter("log_enabled", log_enabled_);
   std::string log_dir;
   this->get_parameter("log_dir", log_dir);
   log_dir_ = log_dir;
 
+  max_rotation_rad_ = std::clamp(std::abs(max_rotation_rad_), 0.01F,
+                                 static_cast<float>(2.0 * kPi));
+  min_rotation_rad_ = std::clamp(std::abs(min_rotation_rad_), 0.001F,
+                                 max_rotation_rad_);
+  rotation_tolerance_rad_ = std::clamp(
+      std::abs(rotation_tolerance_rad_), 0.001F, min_rotation_rad_);
+  min_rotation_w_ = std::clamp(std::abs(min_rotation_w_), 0.001F,
+                               std::abs(max_w_));
+  rotation_accel_limit_ = std::max(std::abs(rotation_accel_limit_), 0.01F);
+
   if (log_enabled_) {
-    std::filesystem::create_directories(log_dir_);
-    RCLCPP_INFO(this->get_logger(), "Dead reckoning logs will be saved to %s",
-                log_dir_.c_str());
+    std::error_code error;
+    std::filesystem::create_directories(log_dir_, error);
+    if (error) {
+      RCLCPP_WARN(this->get_logger(),
+                  "Cannot create dead reckoning log directory %s: %s; "
+                  "continuing without logs",
+                  log_dir_.c_str(), error.message().c_str());
+      log_enabled_ = false;
+    } else {
+      RCLCPP_INFO(this->get_logger(),
+                  "Dead reckoning logs will be saved to %s",
+                  log_dir_.c_str());
+    }
   }
 
   cmd_vel_publisher_ = this->create_publisher<geometry_msgs::msg::Twist>(
@@ -120,9 +154,20 @@ DeadReckoningApproachNode::DeadReckoningApproachNode()
       std::bind(&DeadReckoningApproachNode::handle_accepted, this,
                 std::placeholders::_1));
 
+  rotate_action_server_ = rclcpp_action::create_server<RotateAction>(
+      this, rotate_action_name_,
+      std::bind(&DeadReckoningApproachNode::handle_rotate_goal, this,
+                std::placeholders::_1, std::placeholders::_2),
+      std::bind(&DeadReckoningApproachNode::handle_rotate_cancel, this,
+                std::placeholders::_1),
+      std::bind(&DeadReckoningApproachNode::handle_rotate_accepted, this,
+                std::placeholders::_1));
+
   RCLCPP_INFO(this->get_logger(),
-              "DeadReckoningApproachNode ready: action=%s max_goal=%.3fm",
-              action_name_.c_str(), max_goal_distance_);
+              "DeadReckoningApproachNode ready: move=%s rotate=%s "
+              "max_goal=%.3fm max_rotation=%.3frad",
+              action_name_.c_str(), rotate_action_name_.c_str(),
+              max_goal_distance_, max_rotation_rad_);
 }
 
 rclcpp_action::GoalResponse DeadReckoningApproachNode::handle_goal(
@@ -166,6 +211,44 @@ void DeadReckoningApproachNode::handle_accepted(
       .detach();
 }
 
+rclcpp_action::GoalResponse DeadReckoningApproachNode::handle_rotate_goal(
+    const rclcpp_action::GoalUUID &uuid,
+    std::shared_ptr<const RotateAction::Goal> goal) {
+  (void)uuid;
+  if (active_) {
+    RCLCPP_WARN(this->get_logger(),
+                "Rejecting dead reckoning rotate goal: motion already active");
+    return rclcpp_action::GoalResponse::REJECT;
+  }
+  if (!goal || !std::isfinite(goal->relative_yaw_rad) ||
+      std::abs(goal->relative_yaw_rad) < min_rotation_rad_ ||
+      std::abs(goal->relative_yaw_rad) > max_rotation_rad_) {
+    RCLCPP_WARN(this->get_logger(),
+                "Rejecting rotate goal: yaw=%.4frad allowed=[%.4f, %.4f]",
+                goal ? goal->relative_yaw_rad : 0.0F, min_rotation_rad_,
+                max_rotation_rad_);
+    return rclcpp_action::GoalResponse::REJECT;
+  }
+  RCLCPP_INFO(this->get_logger(), "Received rotate goal: %+.4frad (%.1fdeg)",
+              goal->relative_yaw_rad,
+              goal->relative_yaw_rad * 180.0F / static_cast<float>(kPi));
+  return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+}
+
+rclcpp_action::CancelResponse DeadReckoningApproachNode::handle_rotate_cancel(
+    const std::shared_ptr<GoalHandleRotate> goal_handle) {
+  (void)goal_handle;
+  RCLCPP_INFO(this->get_logger(), "Received dead reckoning rotate cancel");
+  return rclcpp_action::CancelResponse::ACCEPT;
+}
+
+void DeadReckoningApproachNode::handle_rotate_accepted(
+    const std::shared_ptr<GoalHandleRotate> goal_handle) {
+  std::thread(std::bind(&DeadReckoningApproachNode::execute_rotate, this,
+                        goal_handle))
+      .detach();
+}
+
 bool DeadReckoningApproachNode::getRobotPoseInOdom(double &x, double &y,
                                                    double &yaw) {
   geometry_msgs::msg::TransformStamped tf;
@@ -202,7 +285,13 @@ void DeadReckoningApproachNode::openActionLog(float requested_distance,
   std::lock_guard<std::mutex> lock(log_mutex_);
   closeActionLog();
 
-  std::filesystem::create_directories(log_dir_);
+  std::error_code error;
+  std::filesystem::create_directories(log_dir_, error);
+  if (error) {
+    RCLCPP_WARN(this->get_logger(), "Failed to create log directory %s: %s",
+                log_dir_.c_str(), error.message().c_str());
+    return;
+  }
   action_log_path_ =
       log_dir_ / ("dead_reckoning_" + currentTimeForFilename() + ".csv");
   action_log_file_.open(action_log_path_, std::ios::out | std::ios::trunc);
@@ -237,6 +326,133 @@ void DeadReckoningApproachNode::writeActionLog(const std::string &line) {
   if (action_log_file_.is_open()) {
     action_log_file_ << line << '\n';
   }
+}
+
+void DeadReckoningApproachNode::execute_rotate(
+    const std::shared_ptr<GoalHandleRotate> goal_handle) {
+  if (active_.exchange(true)) {
+    auto result = std::make_shared<RotateAction::Result>();
+    result->success = false;
+    result->success_message = "Another dead reckoning motion is active";
+    goal_handle->abort(result);
+    return;
+  }
+
+  auto finish = [this]() {
+    publishStop();
+    active_ = false;
+  };
+
+  auto result = std::make_shared<RotateAction::Result>();
+  auto feedback = std::make_shared<RotateAction::Feedback>();
+  const double requested_yaw = goal_handle->get_goal()->relative_yaw_rad;
+
+  double start_x = 0.0;
+  double start_y = 0.0;
+  double previous_yaw = 0.0;
+  if (!getRobotPoseInOdom(start_x, start_y, previous_yaw)) {
+    finish();
+    result->success = false;
+    result->success_message = "Failed to get initial odom pose";
+    goal_handle->abort(result);
+    return;
+  }
+
+  const rclcpp::Time start_time = this->now();
+  rclcpp::Time previous_time = start_time;
+  const double timeout_sec =
+      std::abs(requested_yaw) /
+          std::max(static_cast<double>(std::abs(max_w_)), 1e-3) +
+      static_cast<double>(timeout_margin_sec_);
+  double accumulated_yaw = 0.0;
+  double w_cmd = 0.0;
+
+  RCLCPP_INFO(this->get_logger(),
+              "Dead reckoning rotate started: target=%+.4frad (%.1fdeg) "
+              "timeout=%.2fs",
+              requested_yaw, requested_yaw * 180.0 / kPi, timeout_sec);
+
+  rclcpp::Rate loop_rate(control_rate_hz_);
+  while (rclcpp::ok()) {
+    if (goal_handle->is_canceling()) {
+      finish();
+      result->success = false;
+      result->success_message = "Dead reckoning rotate canceled";
+      goal_handle->canceled(result);
+      return;
+    }
+
+    const rclcpp::Time now = this->now();
+    const double elapsed_sec = (now - start_time).seconds();
+    const double dt = std::max((now - previous_time).seconds(), 0.0);
+    previous_time = now;
+    if (elapsed_sec > timeout_sec) {
+      finish();
+      result->success = false;
+      result->success_message = "Dead reckoning rotate timeout";
+      goal_handle->abort(result);
+      RCLCPP_WARN(this->get_logger(),
+                  "Dead reckoning rotate timeout: rotated=%+.4frad",
+                  accumulated_yaw);
+      return;
+    }
+
+    double robot_x = 0.0;
+    double robot_y = 0.0;
+    double current_yaw = 0.0;
+    if (!getRobotPoseInOdom(robot_x, robot_y, current_yaw)) {
+      loop_rate.sleep();
+      continue;
+    }
+
+    accumulated_yaw += normalizeAngle(current_yaw - previous_yaw);
+    previous_yaw = current_yaw;
+    const double remaining = requested_yaw - accumulated_yaw;
+    if (std::abs(remaining) <= rotation_tolerance_rad_) {
+      finish();
+      result->success = true;
+      result->success_message = "Dead reckoning rotate reached target";
+      goal_handle->succeed(result);
+      RCLCPP_INFO(this->get_logger(),
+                  "Dead reckoning rotate done: rotated=%+.4frad "
+                  "remaining=%+.4frad",
+                  accumulated_yaw, remaining);
+      return;
+    }
+
+    double target_w = std::clamp(
+        static_cast<double>(kp_yaw_) * remaining,
+        -static_cast<double>(std::abs(max_w_)),
+        static_cast<double>(std::abs(max_w_)));
+    if (std::abs(target_w) < min_rotation_w_) {
+      target_w = std::copysign(static_cast<double>(min_rotation_w_),
+                               remaining);
+    }
+    w_cmd = approachValue(
+        w_cmd, target_w,
+        static_cast<double>(rotation_accel_limit_) * dt);
+
+    geometry_msgs::msg::Twist cmd;
+    cmd.linear.x = 0.0;
+    cmd.angular.z = w_cmd;
+    cmd_vel_publisher_->publish(cmd);
+
+    feedback->remaining_yaw_rad = static_cast<float>(remaining);
+    feedback->progress = static_cast<float>(std::clamp(
+        1.0 - std::abs(remaining) / std::abs(requested_yaw), 0.0, 1.0));
+    goal_handle->publish_feedback(feedback);
+
+    RCLCPP_DEBUG(this->get_logger(),
+                 "dead_reckoning_rotate: rotated=%+.4f remaining=%+.4f "
+                 "w=%.3f",
+                 accumulated_yaw, remaining, w_cmd);
+    loop_rate.sleep();
+  }
+
+  finish();
+  result->success = false;
+  result->success_message = "Node shutdown";
+  goal_handle->abort(result);
 }
 
 void DeadReckoningApproachNode::execute(

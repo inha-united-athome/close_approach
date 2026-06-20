@@ -1,6 +1,7 @@
 dead_reckoning_approach_node:
   ros__parameters:
     action_name: "dead_reckoning_approach"
+    rotate_action_name: "dead_reckoning_rotate"
     odom_frame:  "odom"
     robot_frame: "base_nav"
     cmd_vel_topic: "/cmd_vel"
@@ -12,6 +13,13 @@ dead_reckoning_approach_node:
     max_v:  0.30             # m/s, 최대 직진 속도
     min_v:  0.01             # m/s, 최소 직진 속도
     max_w:  0.20             # rad/s, 최대 회전 속도
+
+    # 상대 yaw 데드레코닝 회전 (+반시계 / -시계)
+    max_rotation_rad:       3.14159
+    min_rotation_rad:       0.01
+    rotation_tolerance_rad: 0.02
+    min_rotation_w:         0.05
+    rotation_accel_limit:   0.40
 
     accel_limit:  0.20       # m/s², 가속 (0→max_v 약 1.5초)
     decel_limit:  0.80       # m/s², 감속 (조건: ≥ kp_distance×max_v=0.24 ✓)

@@ -65,9 +65,13 @@ private:
   float cluster_tolerance_, min_cluster_area_;
   int   min_cluster_size_, max_cluster_size_;
   float target_standoff_distance_;
-  float spike_dy_max_, spike_dtheta_max_;
+  float front_slice_ratio_ = 0.05F;
+  int   front_min_points_ = 5;
+  float x_ema_alpha_ = 0.35F;
+  float spike_dx_max_ = 0.15F;
   int   max_consecutive_outliers_;
   float lidar_max_age_sec_;
+  bool  debug_log_ = true;
 
   // State
   bool  received_camera_info_ = false;

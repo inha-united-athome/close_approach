@@ -45,7 +45,7 @@ ApproachManager::ApproachManager()
       [this](const ApproachError::SharedPtr msg) {
         std::lock_guard<std::mutex> lk(pc_mutex_);
         latest_pc_error_ = msg;
-        if (msg->valid) last_valid_pc_time_ = msg->header.stamp;
+        if (msg->valid) last_valid_pc_time_ = this->now();
       });
 
   edge_error_sub_ = this->create_subscription<ApproachError>(
@@ -138,22 +138,22 @@ void ApproachManager::execute(std::shared_ptr<GoalHandle> gh) {
     if (gh->is_canceling()) {
       result->success = false;
       result->success_message = "Cancelled";
-      gh->abort(result);
       stopApproach();
+      gh->canceled(result);
       return;
     }
     if (action_failed_) {
       result->success = false;
       result->success_message = "Approach failed";
-      gh->abort(result);
       stopApproach();
+      gh->abort(result);
       return;
     }
     if (action_succeeded_) {
       result->success = true;
       result->success_message = "Approach succeeded";
-      gh->succeed(result);
       stopApproach();
+      gh->succeed(result);
       return;
     }
 
@@ -172,8 +172,8 @@ void ApproachManager::execute(std::shared_ptr<GoalHandle> gh) {
 
   result->success = false;
   result->success_message = "ROS shutdown";
-  gh->abort(result);
   stopApproach();
+  gh->abort(result);
 }
 
 // ─── State machine (20 Hz) ──────────────────────────────────────────────────
@@ -188,7 +188,9 @@ void ApproachManager::stateMachineCallback() {
   bool  x_valid = false;
   {
     std::lock_guard<std::mutex> lk(pc_mutex_);
-    if (latest_pc_error_ && latest_pc_error_->valid) {
+    if (latest_pc_error_ && latest_pc_error_->valid &&
+        (now - last_valid_pc_time_).seconds() <=
+            static_cast<double>(pc_timeout_sec_)) {
       x_err   = latest_pc_error_->x_error;
       x_valid = true;
       if (!initial_dist_set_) {
@@ -199,9 +201,9 @@ void ApproachManager::stateMachineCallback() {
   }
 
   // PC timeout (only warn in APPROACH)
-  const bool pc_timed_out = x_valid
-      ? false
-      : (now - last_valid_pc_time_).seconds() > static_cast<double>(pc_timeout_sec_);
+  const bool pc_timed_out = !x_valid &&
+      (now - last_valid_pc_time_).seconds() >
+          static_cast<double>(pc_timeout_sec_);
 
   const float theta_err = last_theta_rad_;
   if (debug_log_) {
@@ -231,17 +233,16 @@ void ApproachManager::stateMachineCallback() {
     case State::IDLE: return;
 
     case State::APPROACH: {
-      ctrl.valid = x_valid || !pc_timed_out;
+      ctrl.valid = x_valid;
       control_error_pub_->publish(ctrl);
 
       if (pc_timed_out) {
-        RCLCPP_WARN(this->get_logger(), "PC timeout in APPROACH → ALIGN_THETA");
-        state_      = State::ALIGN_THETA;
-        align_start_= now;
+        RCLCPP_ERROR(this->get_logger(), "PC timeout in APPROACH → action failed");
+        action_failed_ = true;
         break;
       }
       if (x_valid && std::abs(x_err) < tol_x_) {
-        if (std::abs(theta_err) < tol_theta_) {
+        if (theta_initialized_ && std::abs(theta_err) < tol_theta_) {
           RCLCPP_INFO(this->get_logger(), "APPROACH → DWELL (x=%.3f θ=%.3f)",
                       x_err, theta_err);
           state_       = State::DWELL;
@@ -261,8 +262,17 @@ void ApproachManager::stateMachineCallback() {
       ctrl.valid   = true;
       control_error_pub_->publish(ctrl);
 
-      if (std::abs(theta_err) < tol_theta_) {
-        if (!post_align_done_ && x_valid && std::abs(x_err) >= tol_x_) {
+      if (pc_timed_out) {
+        RCLCPP_ERROR(this->get_logger(),
+                     "PC timeout in ALIGN_THETA → action failed");
+        action_failed_ = true;
+      } else if (theta_initialized_ && std::abs(theta_err) < tol_theta_) {
+        if (!x_valid) {
+          // Wait for a fresh longitudinal estimate; never declare DWELL from
+          // an aligned image alone.
+          break;
+        }
+        if (std::abs(x_err) >= tol_x_) {
           post_align_done_ = true;
           RCLCPP_INFO(this->get_logger(), "ALIGN_THETA → APPROACH recheck");
           state_ = State::APPROACH;
@@ -272,9 +282,8 @@ void ApproachManager::stateMachineCallback() {
           dwell_start_ = now;
         }
       } else if ((now - align_start_).seconds() > static_cast<double>(align_timeout_sec_)) {
-        RCLCPP_WARN(this->get_logger(), "ALIGN_THETA timeout → DWELL");
-        state_       = State::DWELL;
-        dwell_start_ = now;
+        RCLCPP_ERROR(this->get_logger(), "ALIGN_THETA timeout → action failed");
+        action_failed_ = true;
       }
       break;
     }
@@ -282,6 +291,31 @@ void ApproachManager::stateMachineCallback() {
     case State::DWELL: {
       ctrl.valid = false;
       control_error_pub_->publish(ctrl);
+
+      // DWELL is a stability check, not an unconditional success delay.
+      // A noisy one-frame x/theta estimate must return to active correction.
+      if (pc_timed_out) {
+        RCLCPP_ERROR(this->get_logger(), "PC timeout in DWELL → action failed");
+        action_failed_ = true;
+        break;
+      }
+      if (!x_valid || !theta_initialized_) {
+        dwell_start_ = now;
+        break;
+      }
+      if (std::abs(x_err) >= tol_x_) {
+        RCLCPP_WARN(this->get_logger(), "DWELL → APPROACH (x drift %.3f)",
+                    x_err);
+        state_ = State::APPROACH;
+        break;
+      }
+      if (std::abs(theta_err) >= tol_theta_) {
+        RCLCPP_WARN(this->get_logger(), "DWELL → ALIGN_THETA (theta drift %.3f)",
+                    theta_err);
+        state_ = State::ALIGN_THETA;
+        align_start_ = now;
+        break;
+      }
       if ((now - dwell_start_).seconds() > static_cast<double>(dwell_duration_sec_)) {
         state_            = State::DONE;
         action_succeeded_ = true;

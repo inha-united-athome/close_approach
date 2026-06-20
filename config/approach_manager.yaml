@@ -8,7 +8,7 @@ approach_manager:
     tol_theta:          0.08   # rad (~4.5°)
     dwell_duration_sec: 2.0
     align_timeout_sec:  5.0
-    pc_timeout_sec:     2.0    # PC 데이터 없으면 ALIGN_THETA 로 전환
+    pc_timeout_sec:     2.0    # fresh PC x가 이 시간 없으면 action fail
     debug_log:          true
 
     trail_min_dist: 0.03       # m

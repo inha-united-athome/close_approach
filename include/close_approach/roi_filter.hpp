@@ -49,10 +49,6 @@ public:
                       const Eigen::Vector2f *anchor_xy);
 
   void projection_filter(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud);
-
-  void front_slicing(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud);
-  void front_slicing_quantile(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, float quantile = 0.8f);
-  void front_slicing_density(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, int num_bins = 20, float density_drop_threshold = 0.5f);
 private:
   float leaf_size_ = 0.02F;
   int mean_k_ = 50;

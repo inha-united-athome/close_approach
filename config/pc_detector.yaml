@@ -23,7 +23,13 @@ pc_detector:
 
     target_standoff_distance: 0.3
 
-    spike_dy_max:            0.25
-    spike_dtheta_max:        0.25
+    # 선택된 target cluster를 XY로 투영한 뒤, 로봇에 가까운 전면 5%의
+    # median x만 종방향 오차로 사용한다. y 오차는 항상 0이다.
+    front_slice_ratio: 0.05
+    front_min_points:  5
+    x_ema_alpha:       0.35
+    spike_dx_max:      0.15
+
     max_consecutive_outliers: 5
     lidar_max_age_sec:       0.3
+    debug_log:               true

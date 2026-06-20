@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
 
 #include <pcl/io/pcd_io.h>
@@ -29,6 +31,52 @@ void applySpatialRoiBounds(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
   out->height = 1;
   out->is_dense = false;
   cloud = out;
+}
+
+bool keepFrontFraction(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
+                       float ratio, int min_points,
+                       float &representative_x, float &representative_y) {
+  if (!cloud || cloud->empty()) return false;
+
+  std::vector<pcl::PointXYZ> sorted;
+  sorted.reserve(cloud->size());
+  for (const auto &point : cloud->points) {
+    if (std::isfinite(point.x) && std::isfinite(point.y)) {
+      sorted.push_back(point);
+    }
+  }
+  if (sorted.empty()) return false;
+
+  std::sort(sorted.begin(), sorted.end(),
+            [](const pcl::PointXYZ &a, const pcl::PointXYZ &b) {
+              return a.x < b.x;
+            });
+  const std::size_t ratio_count = static_cast<std::size_t>(
+      std::ceil(sorted.size() * std::clamp(ratio, 0.01F, 1.0F)));
+  const std::size_t keep_count = std::min(
+      sorted.size(), std::max<std::size_t>(std::max(1, min_points),
+                                           ratio_count));
+
+  // x는 이미 정렬돼 있으므로 전면 slice의 중앙값을 바로 취한다.
+  representative_x = sorted[keep_count / 2].x;
+  std::vector<float> y_values;
+  y_values.reserve(keep_count);
+  for (std::size_t i = 0; i < keep_count; ++i) {
+    y_values.push_back(sorted[i].y);
+  }
+  const auto y_mid = y_values.begin() +
+                     static_cast<std::ptrdiff_t>(y_values.size() / 2);
+  std::nth_element(y_values.begin(), y_mid, y_values.end());
+  representative_y = *y_mid;
+
+  auto front = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+  front->points.assign(sorted.begin(), sorted.begin() +
+                                        static_cast<std::ptrdiff_t>(keep_count));
+  front->width = static_cast<std::uint32_t>(front->points.size());
+  front->height = 1;
+  front->is_dense = true;
+  cloud = front;
+  return true;
 }
 } // namespace
 
@@ -65,10 +113,13 @@ PCDetector::PCDetector()
   this->declare_parameter<int>  ("max_cluster_size",       10000);
   this->declare_parameter<float>("min_cluster_area",       0.09F);
   this->declare_parameter<float>("target_standoff_distance", 0.3F);
-  this->declare_parameter<float>("spike_dy_max",           0.25F);
-  this->declare_parameter<float>("spike_dtheta_max",       0.25F);
+  this->declare_parameter<float>("front_slice_ratio",       0.05F);
+  this->declare_parameter<int>  ("front_min_points",        5);
+  this->declare_parameter<float>("x_ema_alpha",             0.35F);
+  this->declare_parameter<float>("spike_dx_max",            0.15F);
   this->declare_parameter<int>  ("max_consecutive_outliers", 5);
   this->declare_parameter<float>("lidar_max_age_sec",      0.3F);
+  this->declare_parameter<bool> ("debug_log",              true);
 
   this->get_parameter("cloud_topic",  cloud_topic_);
   this->get_parameter("lidar_topic",  lidar_topic_);
@@ -91,10 +142,17 @@ PCDetector::PCDetector()
   this->get_parameter("max_cluster_size",     max_cluster_size_);
   this->get_parameter("min_cluster_area",     min_cluster_area_);
   this->get_parameter("target_standoff_distance", target_standoff_distance_);
-  this->get_parameter("spike_dy_max",         spike_dy_max_);
-  this->get_parameter("spike_dtheta_max",     spike_dtheta_max_);
+  this->get_parameter("front_slice_ratio",     front_slice_ratio_);
+  this->get_parameter("front_min_points",      front_min_points_);
+  this->get_parameter("x_ema_alpha",           x_ema_alpha_);
+  this->get_parameter("spike_dx_max",          spike_dx_max_);
   this->get_parameter("max_consecutive_outliers", max_consecutive_outliers_);
   this->get_parameter("lidar_max_age_sec",    lidar_max_age_sec_);
+  this->get_parameter("debug_log",            debug_log_);
+  front_slice_ratio_ = std::clamp(front_slice_ratio_, 0.01F, 1.0F);
+  front_min_points_ = std::max(1, front_min_points_);
+  x_ema_alpha_ = std::clamp(x_ema_alpha_, 0.01F, 1.0F);
+  spike_dx_max_ = std::max(0.0F, spike_dx_max_);
 
   roi_filter_->setParameters(leaf_size_, mean_k_, stddev_mul_thresh_,
                               ground_height_, cluster_tolerance_,
@@ -199,7 +257,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   }
 
   roi_filter_->remove_ground(cloud_, tf.transform);
-  applySpatialRoiBounds(cloud_, -std::numeric_limits<float>::infinity(),
+  applySpatialRoiBounds(cloud_, roi_x_min_,
                         roi_x_max_, roi_y_abs_near_, roi_y_abs_max_,
                         roi_z_max_);
 
@@ -239,21 +297,14 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
     anchor_ptr = &anchor_base;
   }
   roi_filter_->cluster_points(cloud_, kdtree_, min_cluster_area_, anchor_ptr);
-
-  // Projection + slicing
-  roi_filter_->projection_filter(cloud_);
-  roi_filter_->front_slicing(cloud_);
-
-  // Filtered cloud for viz
-  {
-    sensor_msgs::msg::PointCloud2 out;
-    pcl::toROSMsg(*cloud_, out);
-    out.header.stamp    = this->now();
-    out.header.frame_id = target_frame_;
-    filtered_cloud_pub_->publish(out);
+  if (cloud_->empty()) {
+    publishInvalid();
+    return;
   }
 
-  // OBB → target edge → SE2 error
+  // XY projection. OBB/anchor is retained only for target association and RViz;
+  // longitudinal control below no longer depends on its normal/yaw estimate.
+  roi_filter_->projection_filter(cloud_);
   OBB        obb         = plane_filter_->compute_OBB(cloud_);
   TargetEdge target_edge = edge_extractor_->extract_edges(
       obb.center, obb.axis1, obb.axis2, obb.length1, obb.length2);
@@ -272,39 +323,73 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   }
   publishTargetEdge(target_edge);
 
-  SE2Error candidate = error_estimator_->estimate_error(
-      target_edge, target_standoff_distance_);
+  // Keep only the nearest X fraction of the selected target cluster. The
+  // median of that front slice is a robust representative surface distance.
+  float representative_x = 0.0F;
+  float representative_y = 0.0F;
+  if (!keepFrontFraction(cloud_, front_slice_ratio_, front_min_points_,
+                         representative_x, representative_y)) {
+    publishInvalid();
+    return;
+  }
 
-  // Spike filter
+  // Filtered cloud now visualizes exactly the points used for longitudinal x.
+  {
+    sensor_msgs::msg::PointCloud2 out;
+    pcl::toROSMsg(*cloud_, out);
+    out.header.stamp    = this->now();
+    out.header.frame_id = target_frame_;
+    filtered_cloud_pub_->publish(out);
+  }
+
+  SE2Error candidate;
+  candidate.x = representative_x - target_standoff_distance_;
+  candidate.y = 0.0F;
+  candidate.degree_theta = 0.0F;
+
+  // X-only spike rejection + EMA. Y and theta belong to neither the
+  // longitudinal detector nor its controller path.
   if (!se2_initialized_) {
     se2_cached_      = candidate;
     se2_initialized_ = true;
     consecutive_outliers_ = 0;
+    initial_dist_ = std::abs(candidate.x);
   } else {
-    const float dy  = std::abs(candidate.y - se2_cached_.y);
-    const float dth = std::abs(candidate.degree_theta - se2_cached_.degree_theta);
-    const bool spike = (dy > spike_dy_max_) || (dth > spike_dtheta_max_);
+    const float dx = std::abs(candidate.x - se2_cached_.x);
+    const bool spike = dx > spike_dx_max_;
     if (spike) {
       if (++consecutive_outliers_ >= max_consecutive_outliers_) {
         se2_cached_           = candidate;
         consecutive_outliers_ = 0;
       }
     } else {
-      se2_cached_           = candidate;
+      se2_cached_.x = x_ema_alpha_ * candidate.x +
+                      (1.0F - x_ema_alpha_) * se2_cached_.x;
+      se2_cached_.y = 0.0F;
+      se2_cached_.degree_theta = 0.0F;
       consecutive_outliers_ = 0;
     }
   }
 
-  // Publish ApproachError (x + y from PC; theta left to edge_detector)
+  // Publish x only. Theta comes from depth edge and y is intentionally unused.
   ApproachError err;
   err.header.stamp    = msg->header.stamp;
   err.valid           = true;
   err.x_error         = se2_cached_.x;
-  err.y_error         = se2_cached_.y;
+  err.y_error         = 0.0f;
   err.theta_error     = 0.0f;   // theta comes from edge_detector
   err.initial_dist_m  = initial_dist_;
   err.mean_y_px       = 0.0f;
   pc_error_pub_->publish(err);
+
+  if (debug_log_) {
+    RCLCPP_INFO_THROTTLE(
+        this->get_logger(), *this->get_clock(), 300,
+        "pc_error valid=1 x=%.4fm surface_x=%.4fm surface_y=%.4fm "
+        "init=%.4fm front=%zu(%.1f%%)",
+        err.x_error, representative_x, representative_y, err.initial_dist_m,
+        cloud_->size(), front_slice_ratio_ * 100.0F);
+  }
 }
 
 void PCDetector::publishInvalid() {
@@ -312,6 +397,10 @@ void PCDetector::publishInvalid() {
   err.header.stamp = this->now();
   err.valid = false;
   pc_error_pub_->publish(err);
+  if (debug_log_) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                         "pc_error valid=0 (no usable longitudinal target)");
+  }
 }
 
 bool PCDetector::getTransform(const std::string &tgt, const std::string &src,

@@ -7,6 +7,7 @@
 #include "close_approach/roi_filter.hpp"
 #include "close_approach/msg/approach_error.hpp"
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -70,7 +71,7 @@ private:
 
   // State
   bool  received_camera_info_ = false;
-  bool  is_active_            = false;
+  std::atomic<bool> is_active_{false};
   bool  aim_anchor_captured_  = false;
   float initial_dist_         = 0.0F;
   Eigen::Vector2f aim_anchor_odom_{0.0F, 0.0F};

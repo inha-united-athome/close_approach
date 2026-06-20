@@ -28,6 +28,7 @@ depth_edge_detector:
 
     max_abs_yaw_deg: 30.0
     enable_service_name: "/approach/edge_detector/set_enable"
+    # 실제 추론은 이 enable과 /approach/active가 모두 true일 때만 수행
     start_enabled: false
     debug_log: true
     debug_image: true

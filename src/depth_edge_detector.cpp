@@ -196,7 +196,8 @@ private:
 
   void imgCallback(
       const sensor_msgs::msg::CompressedImage::ConstSharedPtr &msg) {
-    if (!enabled_.load(std::memory_order_acquire) ||
+    if (!approach_active_.load(std::memory_order_acquire) ||
+        !enabled_.load(std::memory_order_acquire) ||
         !depth_estimator_ || !depth_estimator_->ready()) {
       return;
     }
@@ -354,7 +355,14 @@ private:
   }
 
   void activeCallback(const std_msgs::msg::Bool::SharedPtr msg) {
-    if (msg->data) resetTheta();
+    const bool was_active = approach_active_.exchange(
+        msg->data, std::memory_order_acq_rel);
+    if (was_active != msg->data) {
+      resetTheta();
+      RCLCPP_INFO(get_logger(), "Approach %s: depth inference %s",
+                  msg->data ? "active" : "inactive",
+                  msg->data ? "armed" : "stopped");
+    }
   }
 
   void resetTheta() {
@@ -391,6 +399,7 @@ private:
   bool start_enabled_ = false;
   bool debug_log_ = true;
   bool debug_image_ = true;
+  std::atomic<bool> approach_active_{false};
   std::atomic<bool> enabled_{false};
   std::unique_ptr<TrtDepthEstimator> depth_estimator_;
   float last_theta_rad_ = 0.0f;

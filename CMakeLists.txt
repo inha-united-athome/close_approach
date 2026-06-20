@@ -478,6 +478,13 @@ set(TENSORRT_ROOT "$ENV{CONDA_PREFIX}" CACHE PATH
 file(GLOB _TENSORRT_PIP_LIB_DIRS
   "${TENSORRT_ROOT}/lib/python*/site-packages/tensorrt_libs"
 )
+file(GLOB _CUDA_TARGET_INCLUDE_DIRS
+  "/usr/local/cuda/targets/*/include"
+)
+file(GLOB _CUDA_TARGET_LIB_DIRS
+  "/usr/local/cuda/targets/*/lib"
+  "/usr/local/cuda/targets/*/lib64"
+)
 find_path(TENSORRT_INCLUDE_DIR NvInfer.h
   HINTS
     ${TENSORRT_ROOT}/include
@@ -505,21 +512,36 @@ if(NOT TENSORRT_NVINFER_LIBRARY)
 endif()
 find_library(CUDA_RUNTIME_LIBRARY cudart
   HINTS
+    ${_CUDA_TARGET_LIB_DIRS}
     /usr/local/cuda/lib64
     /usr/local/cuda/targets/x86_64-linux/lib
     /usr/local/cuda/targets/aarch64-linux/lib
     /usr/lib/x86_64-linux-gnu
     /usr/lib/aarch64-linux-gnu
 )
+find_path(CUDA_RUNTIME_INCLUDE_DIR cuda_runtime_api.h
+  HINTS
+    ${_CUDA_TARGET_INCLUDE_DIRS}
+    /usr/local/cuda/include
+    /usr/local/cuda/targets/x86_64-linux/include
+    /usr/local/cuda/targets/aarch64-linux/include
+    /usr/include
+    /usr/include/x86_64-linux-gnu
+    /usr/include/aarch64-linux-gnu
+)
 
-if(TENSORRT_INCLUDE_DIR AND TENSORRT_NVINFER_LIBRARY AND CUDA_RUNTIME_LIBRARY)
+if(TENSORRT_INCLUDE_DIR AND TENSORRT_NVINFER_LIBRARY AND
+   CUDA_RUNTIME_LIBRARY AND CUDA_RUNTIME_INCLUDE_DIR)
   message(STATUS "TensorRT found: enabling semantic and depth inference")
   get_filename_component(TENSORRT_NVINFER_DIR
     "${TENSORRT_NVINFER_LIBRARY}" DIRECTORY)
   foreach(_trt_target edge_yaw_viewer_node depth_anything_image_test
                       depth_edge_detector_node)
     target_compile_definitions(${_trt_target} PRIVATE CAFM_HAS_TENSORRT=1)
-    target_include_directories(${_trt_target} SYSTEM PRIVATE ${TENSORRT_INCLUDE_DIR})
+    target_include_directories(${_trt_target} SYSTEM PRIVATE
+      ${TENSORRT_INCLUDE_DIR}
+      ${CUDA_RUNTIME_INCLUDE_DIR}
+    )
     target_link_libraries(${_trt_target}
       ${TENSORRT_NVINFER_LIBRARY}
       ${CUDA_RUNTIME_LIBRARY}
@@ -530,7 +552,10 @@ if(TENSORRT_INCLUDE_DIR AND TENSORRT_NVINFER_LIBRARY AND CUDA_RUNTIME_LIBRARY)
     )
   endforeach()
 else()
-  message(WARNING "TensorRT not found: viewers build without semantic/depth inference")
+  message(WARNING
+    "TensorRT/CUDA development files not found: viewers build without "
+    "semantic/depth inference (TensorRT include=${TENSORRT_INCLUDE_DIR}, "
+    "CUDA include=${CUDA_RUNTIME_INCLUDE_DIR})")
 endif()
 
 target_link_libraries(pc_detector_node

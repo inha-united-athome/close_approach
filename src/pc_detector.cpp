@@ -127,15 +127,19 @@ PCDetector::PCDetector()
 }
 
 void PCDetector::activeCallback(const std_msgs::msg::Bool::SharedPtr msg) {
-  const bool was_active = is_active_;
-  is_active_ = msg->data;
-  if (!was_active && is_active_) {
+  const bool was_active = is_active_.exchange(msg->data,
+                                               std::memory_order_acq_rel);
+  if (!was_active && msg->data) {
     // Approach just started → reset anchor and spike filter
     aim_anchor_captured_ = false;
     initial_dist_        = 0.0F;
     se2_initialized_     = false;
     consecutive_outliers_= 0;
     RCLCPP_INFO(this->get_logger(), "Active: aim anchor reset");
+  } else if (was_active && !msg->data) {
+    std::lock_guard<std::mutex> lk(lidar_mutex_);
+    lidar_cache_.reset();
+    RCLCPP_INFO(this->get_logger(), "Inactive: point-cloud processing stopped");
   }
 }
 
@@ -147,6 +151,8 @@ void PCDetector::camInfoCallback(const CamInfoMsg::SharedPtr msg) {
 }
 
 void PCDetector::lidarCallback(const CloudMsg::ConstSharedPtr &msg) {
+  if (!is_active_.load(std::memory_order_acquire)) return;
+
   auto lidar_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
   pcl::fromROSMsg(*msg, *lidar_cloud);
   if (lidar_cloud->empty()) return;
@@ -172,6 +178,8 @@ void PCDetector::lidarCallback(const CloudMsg::ConstSharedPtr &msg) {
 }
 
 void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
+  if (!is_active_.load(std::memory_order_acquire)) return;
+
   cloud_.reset(new pcl::PointCloud<pcl::PointXYZ>);
   kdtree_.reset(new pcl::search::KdTree<pcl::PointXYZ>);
 

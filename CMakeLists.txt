@@ -113,6 +113,13 @@ add_executable(bev_viewer_node
 
 add_executable(edge_yaw_viewer_node
   test/edge_yaw_viewer.cpp
+  test/trt_semantic_segmenter.cpp
+  test/trt_depth_estimator.cpp
+)
+
+add_executable(depth_anything_image_test
+  test/depth_anything_image_test.cpp
+  test/trt_depth_estimator.cpp
 )
 
 # ── 새 4개 노드 ─────────────────────────────────────────────────────────────
@@ -127,6 +134,11 @@ add_executable(pc_detector_node
 
 add_executable(edge_detector_node
   src/edge_detector.cpp
+)
+
+add_executable(depth_edge_detector_node
+  src/depth_edge_detector.cpp
+  test/trt_depth_estimator.cpp
 )
 
 add_executable(approach_manager_node
@@ -198,6 +210,13 @@ target_include_directories(bev_viewer_node
 target_include_directories(edge_yaw_viewer_node
   PUBLIC
     ${OpenCV_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test
+)
+
+target_include_directories(depth_anything_image_test
+  PUBLIC
+    ${OpenCV_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test
 )
 
 target_include_directories(pc_detector_node
@@ -212,6 +231,14 @@ target_include_directories(edge_detector_node
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
+    ${OpenCV_INCLUDE_DIRS}
+)
+
+target_include_directories(depth_edge_detector_node
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+    ${CMAKE_CURRENT_SOURCE_DIR}/test
     ${OpenCV_INCLUDE_DIRS}
 )
 
@@ -246,8 +273,10 @@ target_compile_features(dead_reckoning_approach_node PUBLIC cxx_std_17)
 target_compile_features(retreat_node PUBLIC cxx_std_17)
 target_compile_features(bev_viewer_node PUBLIC cxx_std_17)
 target_compile_features(edge_yaw_viewer_node PUBLIC cxx_std_17)
+target_compile_features(depth_anything_image_test PUBLIC cxx_std_17)
 target_compile_features(pc_detector_node PUBLIC cxx_std_17)
 target_compile_features(edge_detector_node PUBLIC cxx_std_17)
+target_compile_features(depth_edge_detector_node PUBLIC cxx_std_17)
 target_compile_features(approach_manager_node PUBLIC cxx_std_17)
 target_compile_features(approach_controller_node PUBLIC cxx_std_17)
 target_compile_features(approach_debug_logger_node PUBLIC cxx_std_17)
@@ -372,6 +401,13 @@ ament_target_dependencies(edge_detector_node
   inha_interfaces
 )
 
+ament_target_dependencies(depth_edge_detector_node
+  rclcpp
+  std_msgs
+  sensor_msgs
+  inha_interfaces
+)
+
 ament_target_dependencies(approach_manager_node
   rclcpp
   rclcpp_action
@@ -431,12 +467,82 @@ target_link_libraries(edge_yaw_viewer_node
   ${OpenCV_LIBS}
 )
 
+target_link_libraries(depth_anything_image_test
+  ${OpenCV_LIBS}
+)
+
+# TensorRT is optional so non-GPU development machines can still build the
+# existing edge viewer. When found, native semantic/depth inference is enabled.
+set(TENSORRT_ROOT "$ENV{CONDA_PREFIX}" CACHE PATH
+  "TensorRT prefix (for example the cafm_yolo26 Conda environment)")
+file(GLOB _TENSORRT_PIP_LIB_DIRS
+  "${TENSORRT_ROOT}/lib/python*/site-packages/tensorrt_libs"
+)
+find_path(TENSORRT_INCLUDE_DIR NvInfer.h
+  HINTS
+    ${TENSORRT_ROOT}/include
+    /usr/include
+    /usr/include/x86_64-linux-gnu
+    /usr/include/aarch64-linux-gnu
+    /usr/local/include
+    /usr/local/cuda/include
+    /usr/src/tensorrt/include
+)
+find_library(TENSORRT_NVINFER_LIBRARY nvinfer
+  HINTS
+    ${_TENSORRT_PIP_LIB_DIRS}
+    /usr/lib
+    /usr/lib/x86_64-linux-gnu
+    /usr/lib/aarch64-linux-gnu
+    /usr/local/lib
+    /usr/local/cuda/lib64
+)
+if(NOT TENSORRT_NVINFER_LIBRARY)
+  find_file(TENSORRT_NVINFER_LIBRARY
+    NAMES libnvinfer.so.10 libnvinfer.so
+    HINTS ${_TENSORRT_PIP_LIB_DIRS}
+  )
+endif()
+find_library(CUDA_RUNTIME_LIBRARY cudart
+  HINTS
+    /usr/local/cuda/lib64
+    /usr/local/cuda/targets/x86_64-linux/lib
+    /usr/local/cuda/targets/aarch64-linux/lib
+    /usr/lib/x86_64-linux-gnu
+    /usr/lib/aarch64-linux-gnu
+)
+
+if(TENSORRT_INCLUDE_DIR AND TENSORRT_NVINFER_LIBRARY AND CUDA_RUNTIME_LIBRARY)
+  message(STATUS "TensorRT found: enabling semantic and depth inference")
+  get_filename_component(TENSORRT_NVINFER_DIR
+    "${TENSORRT_NVINFER_LIBRARY}" DIRECTORY)
+  foreach(_trt_target edge_yaw_viewer_node depth_anything_image_test
+                      depth_edge_detector_node)
+    target_compile_definitions(${_trt_target} PRIVATE CAFM_HAS_TENSORRT=1)
+    target_include_directories(${_trt_target} SYSTEM PRIVATE ${TENSORRT_INCLUDE_DIR})
+    target_link_libraries(${_trt_target}
+      ${TENSORRT_NVINFER_LIBRARY}
+      ${CUDA_RUNTIME_LIBRARY}
+    )
+    set_target_properties(${_trt_target} PROPERTIES
+      BUILD_RPATH "${TENSORRT_NVINFER_DIR}"
+      INSTALL_RPATH "${TENSORRT_NVINFER_DIR}"
+    )
+  endforeach()
+else()
+  message(WARNING "TensorRT not found: viewers build without semantic/depth inference")
+endif()
+
 target_link_libraries(pc_detector_node
   ${PCL_LIBRARIES}
   ${OpenCV_LIBS}
 )
 
 target_link_libraries(edge_detector_node
+  ${OpenCV_LIBS}
+)
+
+target_link_libraries(depth_edge_detector_node
   ${OpenCV_LIBS}
 )
 
@@ -503,7 +609,7 @@ endif()
 rosidl_get_typesupport_target(cpp_typesupport_target
   ${PROJECT_NAME} rosidl_typesupport_cpp)
 
-foreach(_target pc_detector_node edge_detector_node
+foreach(_target pc_detector_node edge_detector_node depth_edge_detector_node
                 approach_manager_node approach_controller_node
                 approach_debug_logger_node)
   target_link_libraries(${_target} "${cpp_typesupport_target}")
@@ -550,8 +656,10 @@ install(
     retreat_node
     bev_viewer_node
     edge_yaw_viewer_node
+    depth_anything_image_test
     pc_detector_node
     edge_detector_node
+    depth_edge_detector_node
     approach_manager_node
     approach_controller_node
     approach_debug_logger_node
@@ -560,6 +668,11 @@ install(
 
 install(
   DIRECTORY config launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(
+  DIRECTORY models
   DESTINATION share/${PROJECT_NAME}
 )
 

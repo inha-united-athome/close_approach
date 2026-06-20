@@ -1,6 +1,6 @@
 approach_controller:
   ros__parameters:
-    kp_x:     0.5
+    kp_x:     0.4
     ki_x:     0.0
     kd_x:     0.0
     kp_theta: -1.2

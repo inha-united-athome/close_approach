@@ -155,7 +155,8 @@ void EdgeDetector::imgCallback(
     held_theta = theta_initialized_;
   }
 
-  err.valid       = theta_initialized_;
+  // held(직전 값 유지)는 valid=false → 매니저가 stale로 보고 회전을 멈추게 한다.
+  err.valid       = (w_sum > 0.0f);
   err.theta_error = last_theta_rad_;
   err.x_error     = 0.0f;
   err.y_error     = 0.0f;

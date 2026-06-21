@@ -24,10 +24,10 @@ depth_edge_detector:
     min_length: 60
     max_gap: 15
 
-    roi_top_pct: 50
-    roi_bot_pct: 100
-    roi_left_pct: 20
-    roi_right_pct: 80
+    roi_top_pct: 20
+    roi_bot_pct: 90
+    roi_left_pct: 40
+    roi_right_pct: 100
 
     max_abs_yaw_deg: 30.0
     enable_service_name: "/approach/edge_detector/set_enable"

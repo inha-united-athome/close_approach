@@ -64,6 +64,7 @@ private:
   float                    last_good_x_err_   = 0.0f;  // last valid longitudinal x
   float                    last_theta_rad_    = 0.0f;
   bool                     theta_initialized_ = false;
+  rclcpp::Time             last_theta_time_;           // time of last fresh theta
 
   // State machine
   State       state_               = State::IDLE;
@@ -82,7 +83,8 @@ private:
   float x_converged_hold_sec_;
   float trail_min_dist_, trail_min_yaw_;
   float pc_timeout_sec_;
-  float x_hold_sec_;   // bridge brief invalid PC bursts with last good x
+  float x_hold_sec_;       // bridge brief invalid PC bursts with last good x
+  float theta_timeout_sec_;  // no fresh yaw for this long -> stop rotating
   rclcpp::Time last_valid_pc_time_;
   std::string  odom_frame_, target_frame_;
   std::string  edge_enable_service_name_;

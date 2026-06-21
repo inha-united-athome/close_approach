@@ -304,7 +304,9 @@ private:
     } else {
       held_theta = theta_initialized_;
     }
-    error.valid = theta_initialized_;
+    // valid는 "이번 프레임에 실제로 측정했는가"만 의미한다. held(직전 값 유지)는
+    // valid=false → 매니저가 stale로 판단해 회전을 멈출 수 있게 한다.
+    error.valid = (weight_sum > 0.0f);
     error.theta_error = last_theta_rad_;
     error.mean_y_px = mean_y;
     error.x_error = 0.0f;

@@ -18,6 +18,7 @@ ApproachManager::ApproachManager()
   this->declare_parameter<float>("align_timeout_sec",  5.0F);
   this->declare_parameter<float>("pc_timeout_sec",     2.0F);
   this->declare_parameter<float>("x_hold_sec",         0.2F);
+  this->declare_parameter<float>("theta_timeout_sec",  1.0F);
   this->declare_parameter<float>("x_converged_hold_sec", 0.5F);
   this->declare_parameter<float>("trail_min_dist",     0.03F);
   this->declare_parameter<float>("trail_min_yaw",      0.052F);
@@ -33,6 +34,7 @@ ApproachManager::ApproachManager()
   this->get_parameter("align_timeout_sec",  align_timeout_sec_);
   this->get_parameter("pc_timeout_sec",     pc_timeout_sec_);
   this->get_parameter("x_hold_sec",         x_hold_sec_);
+  this->get_parameter("theta_timeout_sec",  theta_timeout_sec_);
   this->get_parameter("x_converged_hold_sec", x_converged_hold_sec_);
   this->get_parameter("trail_min_dist",     trail_min_dist_);
   this->get_parameter("trail_min_yaw",      trail_min_yaw_);
@@ -61,6 +63,7 @@ ApproachManager::ApproachManager()
         if (msg->valid) {
           last_theta_rad_    = msg->theta_error;
           theta_initialized_ = true;
+          last_theta_time_   = this->now();
         }
         if (debug_log_) {
           RCLCPP_INFO_THROTTLE(
@@ -221,13 +224,19 @@ void ApproachManager::stateMachineCallback() {
       (now - last_valid_pc_time_).seconds() >
           static_cast<double>(pc_timeout_sec_);
 
-  const float theta_err = last_theta_rad_;
+  // Yaw freshness: a held (stale) edge value must NOT keep the robot rotating.
+  // If no fresh yaw arrived within theta_timeout_sec, command 0 yaw (the slew
+  // limiter then ramps the rotation down to a stop).
+  const bool theta_fresh = theta_initialized_ &&
+      (now - last_theta_time_).seconds() <=
+          static_cast<double>(theta_timeout_sec_);
+  const float theta_err = theta_fresh ? last_theta_rad_ : 0.0f;
   if (debug_log_) {
     RCLCPP_INFO_THROTTLE(
         this->get_logger(), *this->get_clock(), 300,
-        "manager state=%s x_valid=%d held=%d x=%.4f theta=%.4f rad (%.2f deg) theta_init=%d",
+        "manager state=%s x_valid=%d held=%d x=%.4f theta=%.4f rad (%.2f deg) theta_fresh=%d",
         stateStr(), x_valid, x_held, x_err, theta_err,
-        theta_err * 180.0f / static_cast<float>(M_PI), theta_initialized_);
+        theta_err * 180.0f / static_cast<float>(M_PI), theta_fresh);
   }
 
   // Build control_error to send to controller
@@ -276,7 +285,7 @@ void ApproachManager::stateMachineCallback() {
       }
 
       {
-        if (theta_initialized_ && std::abs(theta_err) < tol_theta_) {
+        if (theta_fresh && std::abs(theta_err) < tol_theta_) {
           RCLCPP_INFO(this->get_logger(), "APPROACH → DWELL (x=%.3f θ=%.3f)",
                       x_err, theta_err);
           state_       = State::DWELL;
@@ -305,7 +314,7 @@ void ApproachManager::stateMachineCallback() {
         RCLCPP_ERROR(this->get_logger(),
                      "PC timeout in ALIGN_THETA → action failed");
         action_failed_ = true;
-      } else if (theta_initialized_ && std::abs(theta_err) < tol_theta_) {
+      } else if (theta_fresh && std::abs(theta_err) < tol_theta_) {
         if (!x_valid) {
           // Wait for a fresh longitudinal estimate; never declare DWELL from
           // an aligned image alone.
@@ -332,7 +341,7 @@ void ApproachManager::stateMachineCallback() {
         action_failed_ = true;
         break;
       }
-      if (!x_valid || !theta_initialized_) {
+      if (!x_valid || !theta_fresh) {
         dwell_start_ = now;
         break;
       }
@@ -425,6 +434,7 @@ void ApproachManager::startApproach(float standoff) {
   action_failed_       = false;
   theta_initialized_   = false;
   last_theta_rad_      = 0.0f;
+  last_theta_time_     = this->now();
   x_convergence_pending_ = false;
   last_valid_pc_time_  = this->now();
 
@@ -465,6 +475,7 @@ void ApproachManager::stopApproach() {
   }
   theta_initialized_ = false;
   last_theta_rad_ = 0.0F;
+  last_theta_time_ = this->now();
   initial_dist_set_ = false;
   initial_dist_ = 0.0F;
   x_convergence_pending_ = false;

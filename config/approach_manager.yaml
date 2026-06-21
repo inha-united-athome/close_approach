@@ -10,6 +10,7 @@ approach_manager:
     align_timeout_sec:  5.0
     pc_timeout_sec:     2.0    # fresh PC x가 이 시간 없으면 action fail
     x_hold_sec:         0.2    # 짧은 invalid 버스트는 직전 유효 x로 메워 끊김 방지 (< pc_timeout_sec)
+    theta_timeout_sec:  0.5    # 신선한 yaw가 이 시간 없으면 θ명령=0 (stale 값으로 계속 회전 방지)
     x_converged_hold_sec: 0.5  # x 허용범위가 연속으로 유지돼야 상태 전환
     debug_log:          true
 

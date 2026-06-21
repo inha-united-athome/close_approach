@@ -2,6 +2,7 @@ pc_detector:
   ros__parameters:
     cloud_topic:  "/camera/camera_head/depth/color/points"
     lidar_topic:  "/livox/lidar"
+    use_lidar:    true          # false면 LiDAR 구독·융합 안 함 (뎁스 카메라만)
     info_topic:   "/camera/camera_head/color/camera_info"
     target_frame: "base_nav"
     odom_frame:   "odom"
@@ -38,7 +39,7 @@ pc_detector:
       min_inliers:  50     # 이 미만이면 yaw 무효
       max_normal_z: 0.4    # |n_z| 이하만 '수직면'으로 인정 (테이블 윗면 배제)
       max_yaw_deg:  45.0   # 계산 yaw가 이보다 크면 오검출로 보고 무효
-      sign:         1.0    # 엣지 yaw 부호와 맞추려면 -1.0로 뒤집기 (실측 확인)
+      sign:         -1.0   # PC 평면 yaw가 엣지와 반대로 돌아 뒤집음 (실측 확인됨)
 
     # 로봇 자기 점 제거 (TF 기반 박스 제외). 각 박스는 링크 프레임 기준이며
     # cloud stamp 시점의 base_nav→link TF로 위치시킨다(움직이는 팔도 대응).

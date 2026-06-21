@@ -78,6 +78,9 @@ private:
   // slice directly on the ROI + self-filtered cloud (nearest-obstacle = target).
   bool  use_clustering_ = true;
 
+  // When false, ignore the LiDAR entirely (no subscription, no fusion).
+  bool  use_lidar_ = true;
+
   // Robot self filter (TF-driven box exclusion). Each volume is a box defined
   // in a robot link frame; points inside any box (after live TF lookup) are
   // dropped so the nearest-point logic never locks onto the robot itself.

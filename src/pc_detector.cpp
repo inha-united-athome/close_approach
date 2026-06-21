@@ -127,6 +127,7 @@ PCDetector::PCDetector()
   this->declare_parameter<bool> ("debug_log",              true);
 
   this->declare_parameter<bool> ("use_clustering",        true);
+  this->declare_parameter<bool> ("use_lidar",             true);
   this->declare_parameter<bool> ("self_filter.enabled",   false);
   this->declare_parameter<double>("self_filter.padding",  0.03);
   this->declare_parameter<std::vector<std::string>>("self_filter.frames", {});
@@ -171,6 +172,7 @@ PCDetector::PCDetector()
   spike_dx_max_ = std::max(0.0F, spike_dx_max_);
 
   this->get_parameter("use_clustering", use_clustering_);
+  this->get_parameter("use_lidar", use_lidar_);
   {
     double pad = 0.03;
     this->get_parameter("self_filter.enabled", self_filter_enabled_);
@@ -244,9 +246,15 @@ PCDetector::PCDetector()
   cloud_sub_   = this->create_subscription<CloudMsg>(
       cloud_topic_, qos_be_,
       std::bind(&PCDetector::cloudCallback, this, std::placeholders::_1));
-  lidar_sub_   = this->create_subscription<CloudMsg>(
-      lidar_topic_, qos_be_,
-      std::bind(&PCDetector::lidarCallback, this, std::placeholders::_1));
+  if (use_lidar_) {
+    lidar_sub_ = this->create_subscription<CloudMsg>(
+        lidar_topic_, qos_be_,
+        std::bind(&PCDetector::lidarCallback, this, std::placeholders::_1));
+    RCLCPP_INFO(this->get_logger(), "LiDAR fusion enabled (topic=%s)",
+                lidar_topic_.c_str());
+  } else {
+    RCLCPP_INFO(this->get_logger(), "LiDAR fusion disabled (use_lidar=false)");
+  }
   cam_info_sub_= this->create_subscription<CamInfoMsg>(
       info_topic_, qos_be_,
       std::bind(&PCDetector::camInfoCallback, this, std::placeholders::_1));
@@ -355,7 +363,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
                         roi_z_max_);
 
   // LiDAR fusion
-  {
+  if (use_lidar_) {
     std::lock_guard<std::mutex> lk(lidar_mutex_);
     if (lidar_cache_ && !lidar_cache_->empty()) {
       const double age = (this->now() - lidar_stamp_).seconds();

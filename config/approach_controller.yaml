@@ -8,7 +8,7 @@ approach_controller:
     kd_theta: 0.0
 
     max_v: 0.20
-    max_w: 0.20
+    max_w: 0.10
     debug_log: true
 
     decel_dist_max: 0.15   # m, 감속 구간 최대 길이 (0.20→0.10: 감속 구간 절반)

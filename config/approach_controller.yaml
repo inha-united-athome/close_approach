@@ -3,7 +3,7 @@ approach_controller:
     kp_x:     0.4
     ki_x:     0.0
     kd_x:     0.0
-    kp_theta: -0.8
+    kp_theta: -0.5
     ki_theta: 0.0
     kd_theta: 0.0
 

@@ -19,6 +19,8 @@ ApproachManager::ApproachManager()
   this->declare_parameter<float>("pc_timeout_sec",     2.0F);
   this->declare_parameter<float>("x_hold_sec",         0.2F);
   this->declare_parameter<float>("theta_timeout_sec",  1.0F);
+  this->declare_parameter<float>("yaw_fail_deg",       10.0F);
+  this->declare_parameter<float>("x_fail_dist",        0.10F);
   this->declare_parameter<float>("x_converged_hold_sec", 0.5F);
   this->declare_parameter<float>("trail_min_dist",     0.03F);
   this->declare_parameter<float>("trail_min_yaw",      0.052F);
@@ -35,6 +37,10 @@ ApproachManager::ApproachManager()
   this->get_parameter("pc_timeout_sec",     pc_timeout_sec_);
   this->get_parameter("x_hold_sec",         x_hold_sec_);
   this->get_parameter("theta_timeout_sec",  theta_timeout_sec_);
+  float yaw_fail_deg = 10.0F;
+  this->get_parameter("yaw_fail_deg", yaw_fail_deg);
+  yaw_fail_rad_ = yaw_fail_deg * static_cast<float>(M_PI) / 180.0F;
+  this->get_parameter("x_fail_dist", x_fail_dist_);
   this->get_parameter("x_converged_hold_sec", x_converged_hold_sec_);
   this->get_parameter("trail_min_dist",     trail_min_dist_);
   this->get_parameter("trail_min_yaw",      trail_min_yaw_);
@@ -242,6 +248,12 @@ void ApproachManager::stateMachineCallback() {
   const bool theta_fresh = edge_fresh || pc_yaw_fresh;
   const float theta_err =
       edge_fresh ? last_theta_rad_ : (pc_yaw_fresh ? last_pc_yaw_ : 0.0f);
+  // Remember the last actually-measured yaw (not the stale→0 command) so the
+  // terminal acceptance check can judge "was yaw good enough".
+  if (theta_fresh) {
+    last_known_theta_  = theta_err;
+    yaw_ever_measured_ = true;
+  }
   if (debug_log_) {
     RCLCPP_INFO_THROTTLE(
         this->get_logger(), *this->get_clock(), 300,
@@ -266,6 +278,31 @@ void ApproachManager::stateMachineCallback() {
     state_pub_->publish(s);
   }
 
+  // Terminal decision when we give up actively correcting (PC/align timeout).
+  // Competition policy: only two real failures remain —
+  //   (1) yaw was off by >= yaw_fail_deg, or
+  //   (2) x was lost while still far (|x| >= x_fail_dist).
+  // Otherwise accept the pose as SUCCESS.
+  auto resolveTerminal = [&](const char *reason) {
+    const bool x_ok = initial_dist_set_ &&
+                      std::abs(last_good_x_err_) < x_fail_dist_;
+    const bool yaw_ok = !yaw_ever_measured_ ||
+                        std::abs(last_known_theta_) < yaw_fail_rad_;
+    const float yaw_deg = last_known_theta_ * 180.0f / static_cast<float>(M_PI);
+    if (x_ok && yaw_ok) {
+      action_succeeded_ = true;
+      RCLCPP_WARN(this->get_logger(),
+                  "%s but pose acceptable (x=%.3fm, yaw=%.2fdeg) → SUCCESS",
+                  reason, last_good_x_err_, yaw_deg);
+    } else {
+      action_failed_ = true;
+      RCLCPP_ERROR(this->get_logger(),
+                   "%s, pose NOT acceptable (x=%.3fm x_ok=%d, yaw=%.2fdeg "
+                   "yaw_ok=%d) → FAIL",
+                   reason, last_good_x_err_, x_ok, yaw_deg, yaw_ok);
+    }
+  };
+
   switch (state_) {
     case State::IDLE: return;
 
@@ -274,8 +311,7 @@ void ApproachManager::stateMachineCallback() {
       control_error_pub_->publish(ctrl);
 
       if (pc_timed_out) {
-        RCLCPP_ERROR(this->get_logger(), "PC timeout in APPROACH → action failed");
-        action_failed_ = true;
+        resolveTerminal("PC timeout in APPROACH");
         break;
       }
       if (!x_valid || std::abs(x_err) >= tol_x_) {
@@ -323,9 +359,7 @@ void ApproachManager::stateMachineCallback() {
                     "ALIGN_THETA → APPROACH (x moved out: %.3f)", x_err);
         state_ = State::APPROACH;
       } else if (pc_timed_out) {
-        RCLCPP_ERROR(this->get_logger(),
-                     "PC timeout in ALIGN_THETA → action failed");
-        action_failed_ = true;
+        resolveTerminal("PC timeout in ALIGN_THETA");
       } else if (theta_fresh && std::abs(theta_err) < tol_theta_) {
         if (!x_valid) {
           // Wait for a fresh longitudinal estimate; never declare DWELL from
@@ -336,8 +370,8 @@ void ApproachManager::stateMachineCallback() {
         state_       = State::DWELL;
         dwell_start_ = now;
       } else if ((now - align_start_).seconds() > static_cast<double>(align_timeout_sec_)) {
-        RCLCPP_ERROR(this->get_logger(), "ALIGN_THETA timeout → action failed");
-        action_failed_ = true;
+        // Gave up perfecting yaw. Accept if last yaw < yaw_fail_deg, else fail.
+        resolveTerminal("ALIGN_THETA timeout");
       }
       break;
     }
@@ -349,11 +383,13 @@ void ApproachManager::stateMachineCallback() {
       // DWELL is a stability check, not an unconditional success delay.
       // A noisy one-frame x/theta estimate must return to active correction.
       if (pc_timed_out) {
-        RCLCPP_ERROR(this->get_logger(), "PC timeout in DWELL → action failed");
-        action_failed_ = true;
+        resolveTerminal("PC timeout in DWELL");
         break;
       }
-      if (!x_valid || !theta_fresh) {
+      // Yaw was already confirmed < tol_theta at DWELL entry and the robot is
+      // stopped here, so a stale yaw must NOT block success — only require a
+      // fresh longitudinal estimate.
+      if (!x_valid) {
         dwell_start_ = now;
         break;
       }
@@ -450,6 +486,8 @@ void ApproachManager::startApproach(float standoff) {
   pc_yaw_valid_        = false;
   last_pc_yaw_         = 0.0f;
   last_pc_yaw_time_    = this->now();
+  last_known_theta_    = 0.0f;
+  yaw_ever_measured_   = false;
   x_convergence_pending_ = false;
   last_valid_pc_time_  = this->now();
 
@@ -494,6 +532,8 @@ void ApproachManager::stopApproach() {
   pc_yaw_valid_ = false;
   last_pc_yaw_ = 0.0F;
   last_pc_yaw_time_ = this->now();
+  last_known_theta_ = 0.0F;
+  yaw_ever_measured_ = false;
   initial_dist_set_ = false;
   initial_dist_ = 0.0F;
   x_convergence_pending_ = false;

@@ -14,9 +14,10 @@ depth_edge_detector:
     depth_threshold_step: 0.05
     depth_weight_gamma: 2.0
     min_candidate_lines: 1
-    # 0.50까지 내려도 유효선이 없으면 깊이 마스크를 풀고 전체 엣지로 1회 폴백.
-    # (그래도 proximity^gamma 가중은 유지되어 먼 배경선은 낮게 깔림)
-    depth_fallback_full: true
+    # false: 0.50 아래(먼 영역)는 보지 않음. 근접 엣지가 없으면 엣지 yaw는
+    #        valid=false가 되고, 매니저가 PC 평면 normal yaw로 fallback한다.
+    #        (전체 이미지 폴백을 켜면 배경선 기반 엣지가 더 좋은 PC yaw를 가로챔)
+    depth_fallback_full: false
 
     canny_low: 50
     canny_high: 150

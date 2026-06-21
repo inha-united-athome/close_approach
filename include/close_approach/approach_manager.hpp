@@ -68,6 +68,8 @@ private:
   float                    last_pc_yaw_       = 0.0f;   // plane-normal yaw fallback
   bool                     pc_yaw_valid_      = false;
   rclcpp::Time             last_pc_yaw_time_;
+  float                    last_known_theta_  = 0.0f;   // last actually-measured yaw
+  bool                     yaw_ever_measured_ = false;
 
   // State machine
   State       state_               = State::IDLE;
@@ -88,6 +90,10 @@ private:
   float pc_timeout_sec_;
   float x_hold_sec_;       // bridge brief invalid PC bursts with last good x
   float theta_timeout_sec_;  // no fresh yaw for this long -> stop rotating
+  // Terminal acceptance: on give-up (PC/align timeout) succeed if the pose is
+  // good enough, fail only if x was lost while far OR yaw is badly off.
+  float yaw_fail_rad_;     // |yaw| >= this at give-up -> FAIL
+  float x_fail_dist_;      // |x_error| >= this when lost -> FAIL (lost while far)
   rclcpp::Time last_valid_pc_time_;
   std::string  odom_frame_, target_frame_;
   std::string  edge_enable_service_name_;

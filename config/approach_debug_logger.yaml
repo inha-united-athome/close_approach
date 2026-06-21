@@ -7,4 +7,4 @@ approach_debug_logger:
     save_pcd: true
 
     image_topic: /approach/edge_debug/compressed
-    cloud_topic: /approach/filtered_cloud
+    cloud_topic: /approach/debug_cloud_colored   # 전체(흰)+앞5%(빨강) 컬러 PCD

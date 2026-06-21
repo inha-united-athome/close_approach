@@ -53,6 +53,7 @@ private:
   rclcpp::Publisher<ApproachError>::SharedPtr              pc_error_pub_;
   rclcpp::Publisher<CloudMsg>::SharedPtr                   filtered_cloud_pub_;
   rclcpp::Publisher<CloudMsg>::SharedPtr                   debug_cloud_pub_;
+  rclcpp::Publisher<CloudMsg>::SharedPtr                   colored_cloud_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr obb_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr edge_pub_;
 

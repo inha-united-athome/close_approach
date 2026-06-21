@@ -266,6 +266,7 @@ PCDetector::PCDetector()
   pc_error_pub_      = this->create_publisher<ApproachError>("/approach/pc_error", qos_rel_);
   filtered_cloud_pub_= this->create_publisher<CloudMsg>("/approach/filtered_cloud", qos_be_);
   debug_cloud_pub_   = this->create_publisher<CloudMsg>("/approach/debug_cloud", qos_be_);
+  colored_cloud_pub_ = this->create_publisher<CloudMsg>("/approach/debug_cloud_colored", qos_be_);
   obb_pub_           = this->create_publisher<visualization_msgs::msg::Marker>(
       "/approach/obb_marker", qos_rel_);
   edge_pub_          = this->create_publisher<visualization_msgs::msg::Marker>(
@@ -455,6 +456,34 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
     out.header.stamp    = this->now();
     out.header.frame_id = target_frame_;
     filtered_cloud_pub_->publish(out);
+  }
+
+  // Colored debug cloud: the whole self-filtered cloud in white, with the front
+  // slice actually used for x highlighted in red. Much easier to judge in a PCD
+  // viewer than the ~5% slice alone. Built only when something subscribes.
+  if (colored_cloud_pub_->get_subscription_count() > 0 && yaw_src &&
+      !yaw_src->empty()) {
+    float slice_max_x = -std::numeric_limits<float>::max();
+    for (const auto &p : cloud_->points) slice_max_x = std::max(slice_max_x, p.x);
+    pcl::PointCloud<pcl::PointXYZRGB> colored;
+    colored.points.reserve(yaw_src->points.size());
+    for (const auto &p : yaw_src->points) {
+      pcl::PointXYZRGB cp;
+      cp.x = p.x; cp.y = p.y; cp.z = p.z;
+      const bool in_slice = p.x <= slice_max_x;  // front slice used for x → red
+      cp.r = 255;
+      cp.g = in_slice ? 0 : 255;
+      cp.b = in_slice ? 0 : 255;
+      colored.points.push_back(cp);
+    }
+    colored.width = static_cast<std::uint32_t>(colored.points.size());
+    colored.height = 1;
+    colored.is_dense = false;
+    sensor_msgs::msg::PointCloud2 out;
+    pcl::toROSMsg(colored, out);
+    out.header.stamp    = this->now();
+    out.header.frame_id = target_frame_;
+    colored_cloud_pub_->publish(out);
   }
 
   SE2Error candidate;

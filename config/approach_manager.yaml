@@ -6,9 +6,10 @@ approach_manager:
 
     tol_x:              0.03   # m
     tol_theta:          0.08   # rad (~4.5°)
-    dwell_duration_sec: 2.0
+    dwell_duration_sec: 1.0   # 정착 확인 시간 (멈추는 데 ~0.2s). 2.0→1.0; 깔끔하면 0.5까지 더 낮춤 가능
     align_timeout_sec:  5.0
     pc_timeout_sec:     2.0    # fresh PC x가 이 시간 없으면 action fail
+    x_hold_sec:         0.2    # 짧은 invalid 버스트는 직전 유효 x로 메워 끊김 방지 (< pc_timeout_sec)
     x_converged_hold_sec: 0.5  # x 허용범위가 연속으로 유지돼야 상태 전환
     debug_log:          true
 

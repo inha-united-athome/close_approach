@@ -17,6 +17,7 @@ ApproachManager::ApproachManager()
   this->declare_parameter<float>("dwell_duration_sec", 2.0F);
   this->declare_parameter<float>("align_timeout_sec",  5.0F);
   this->declare_parameter<float>("pc_timeout_sec",     2.0F);
+  this->declare_parameter<float>("x_hold_sec",         0.2F);
   this->declare_parameter<float>("x_converged_hold_sec", 0.5F);
   this->declare_parameter<float>("trail_min_dist",     0.03F);
   this->declare_parameter<float>("trail_min_yaw",      0.052F);
@@ -31,6 +32,7 @@ ApproachManager::ApproachManager()
   this->get_parameter("dwell_duration_sec", dwell_duration_sec_);
   this->get_parameter("align_timeout_sec",  align_timeout_sec_);
   this->get_parameter("pc_timeout_sec",     pc_timeout_sec_);
+  this->get_parameter("x_hold_sec",         x_hold_sec_);
   this->get_parameter("x_converged_hold_sec", x_converged_hold_sec_);
   this->get_parameter("trail_min_dist",     trail_min_dist_);
   this->get_parameter("trail_min_yaw",      trail_min_yaw_);
@@ -47,7 +49,10 @@ ApproachManager::ApproachManager()
       [this](const ApproachError::SharedPtr msg) {
         std::lock_guard<std::mutex> lk(pc_mutex_);
         latest_pc_error_ = msg;
-        if (msg->valid) last_valid_pc_time_ = this->now();
+        if (msg->valid) {
+          last_valid_pc_time_ = this->now();
+          last_good_x_err_    = msg->x_error;
+        }
       });
 
   edge_error_sub_ = this->create_subscription<ApproachError>(
@@ -188,17 +193,26 @@ void ApproachManager::stateMachineCallback() {
   // Read latest PC error
   float x_err  = 0.0f;
   bool  x_valid = false;
+  bool  x_held  = false;
   {
     std::lock_guard<std::mutex> lk(pc_mutex_);
+    const double since_valid = (now - last_valid_pc_time_).seconds();
     if (latest_pc_error_ && latest_pc_error_->valid &&
-        (now - last_valid_pc_time_).seconds() <=
-            static_cast<double>(pc_timeout_sec_)) {
+        since_valid <= static_cast<double>(pc_timeout_sec_)) {
       x_err   = latest_pc_error_->x_error;
       x_valid = true;
       if (!initial_dist_set_) {
         initial_dist_    = latest_pc_error_->x_error;
         initial_dist_set_= true;
       }
+    } else if (initial_dist_set_ &&
+               since_valid <= static_cast<double>(x_hold_sec_)) {
+      // Bridge a brief invalid burst (a dropped frame or the short spike-verify
+      // window in pc_detector) with the last good longitudinal estimate, so the
+      // controller does not see validity toggle and command a hard stop/go.
+      x_err   = last_good_x_err_;
+      x_valid = true;
+      x_held  = true;
     }
   }
 
@@ -211,8 +225,8 @@ void ApproachManager::stateMachineCallback() {
   if (debug_log_) {
     RCLCPP_INFO_THROTTLE(
         this->get_logger(), *this->get_clock(), 300,
-        "manager state=%s x_valid=%d x=%.4f theta=%.4f rad (%.2f deg) theta_init=%d",
-        stateStr(), x_valid, x_err, theta_err,
+        "manager state=%s x_valid=%d held=%d x=%.4f theta=%.4f rad (%.2f deg) theta_init=%d",
+        stateStr(), x_valid, x_held, x_err, theta_err,
         theta_err * 180.0f / static_cast<float>(M_PI), theta_initialized_);
   }
 
@@ -417,6 +431,7 @@ void ApproachManager::startApproach(float standoff) {
   {
     std::lock_guard<std::mutex> lk(pc_mutex_);
     latest_pc_error_.reset();
+    last_good_x_err_ = 0.0f;
   }
 
   {
@@ -445,6 +460,7 @@ void ApproachManager::stopApproach() {
   {
     std::lock_guard<std::mutex> lk(pc_mutex_);
     latest_pc_error_.reset();
+    last_good_x_err_ = 0.0f;
     last_valid_pc_time_ = this->now();
   }
   theta_initialized_ = false;

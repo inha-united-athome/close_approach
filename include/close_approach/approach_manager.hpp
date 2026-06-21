@@ -61,6 +61,7 @@ private:
   // Cached sensor inputs
   ApproachError::SharedPtr latest_pc_error_;
   std::mutex               pc_mutex_;
+  float                    last_good_x_err_   = 0.0f;  // last valid longitudinal x
   float                    last_theta_rad_    = 0.0f;
   bool                     theta_initialized_ = false;
 
@@ -81,6 +82,7 @@ private:
   float x_converged_hold_sec_;
   float trail_min_dist_, trail_min_yaw_;
   float pc_timeout_sec_;
+  float x_hold_sec_;   // bridge brief invalid PC bursts with last good x
   rclcpp::Time last_valid_pc_time_;
   std::string  odom_frame_, target_frame_;
   std::string  edge_enable_service_name_;

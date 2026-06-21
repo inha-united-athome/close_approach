@@ -69,6 +69,7 @@ public:
     declare_parameter<double>("depth_threshold_step", 0.05);
     declare_parameter<double>("depth_weight_gamma", 2.0);
     declare_parameter<int>("min_candidate_lines", 1);
+    declare_parameter<bool>("depth_fallback_full", true);
     declare_parameter<int>("canny_low", 50);
     declare_parameter<int>("canny_high", 150);
     declare_parameter<int>("hough_thresh", 40);
@@ -94,6 +95,7 @@ public:
     get_parameter("depth_threshold_step", depth_threshold_step_);
     get_parameter("depth_weight_gamma", depth_weight_gamma_);
     get_parameter("min_candidate_lines", min_candidate_lines_);
+    get_parameter("depth_fallback_full", depth_fallback_full_);
     get_parameter("canny_low", canny_low_);
     get_parameter("canny_high", canny_high_);
     get_parameter("hough_thresh", hough_thresh_);
@@ -190,6 +192,24 @@ private:
       }
       current = std::max(depth_threshold_min_,
                          current - depth_threshold_step_);
+    }
+
+    // Last resort: even at the minimum proximity threshold nothing usable was
+    // found. Drop the hard depth gate and run on the full edge map. The caller
+    // still weights each line by proximity^gamma, so far/background lines stay
+    // low-weight — we just stop refusing to produce any estimate.
+    if (depth_fallback_full_ && result.accepted < min_candidate_lines_) {
+      result.filtered_edges = canny;
+      result.lines.clear();
+      cv::HoughLinesP(result.filtered_edges, result.lines, 1, CV_PI / 180.0,
+                      hough_thresh_, min_length_, max_gap_);
+      result.accepted = 0;
+      for (const auto &line : result.lines) {
+        if (std::abs(normalizedAngleDeg(line)) < max_abs_yaw_deg_) {
+          ++result.accepted;
+        }
+      }
+      result.threshold = 0.0;  // 0 = full image (no depth gate); shown in debug
     }
     return result;
   }
@@ -386,6 +406,7 @@ private:
   double depth_threshold_step_ = 0.05;
   double depth_weight_gamma_ = 2.0;
   int min_candidate_lines_ = 1;
+  bool depth_fallback_full_ = true;
   int canny_low_ = 50;
   int canny_high_ = 150;
   int hough_thresh_ = 40;

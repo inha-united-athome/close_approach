@@ -13,6 +13,8 @@ test/*
 !test/trt_depth_estimator.cpp
 !test/trt_depth_estimator.hpp
 !test/depth_anything_image_test.cpp
+!test/self_filter_tuner.cpp
+!test/depth_edge_tuner.cpp
 yolo26n-sem.pt
 yolo26n-sem.onnx
 yolo26n-sem.engine

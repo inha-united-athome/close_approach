@@ -14,6 +14,9 @@ depth_edge_detector:
     depth_threshold_step: 0.05
     depth_weight_gamma: 2.0
     min_candidate_lines: 1
+    # 0.50까지 내려도 유효선이 없으면 깊이 마스크를 풀고 전체 엣지로 1회 폴백.
+    # (그래도 proximity^gamma 가중은 유지되어 먼 배경선은 낮게 깔림)
+    depth_fallback_full: true
 
     canny_low: 50
     canny_high: 150

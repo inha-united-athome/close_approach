@@ -121,6 +121,17 @@ PCDetector::PCDetector()
   this->declare_parameter<float>("lidar_max_age_sec",      0.3F);
   this->declare_parameter<bool> ("debug_log",              true);
 
+  this->declare_parameter<bool> ("use_clustering",        true);
+  this->declare_parameter<bool> ("self_filter.enabled",   false);
+  this->declare_parameter<double>("self_filter.padding",  0.03);
+  this->declare_parameter<std::vector<std::string>>("self_filter.frames", {});
+  this->declare_parameter<std::vector<double>>("self_filter.size_x", {});
+  this->declare_parameter<std::vector<double>>("self_filter.size_y", {});
+  this->declare_parameter<std::vector<double>>("self_filter.size_z", {});
+  this->declare_parameter<std::vector<double>>("self_filter.offset_x", {});
+  this->declare_parameter<std::vector<double>>("self_filter.offset_y", {});
+  this->declare_parameter<std::vector<double>>("self_filter.offset_z", {});
+
   this->get_parameter("cloud_topic",  cloud_topic_);
   this->get_parameter("lidar_topic",  lidar_topic_);
   this->get_parameter("info_topic",   info_topic_);
@@ -153,6 +164,49 @@ PCDetector::PCDetector()
   front_min_points_ = std::max(1, front_min_points_);
   x_ema_alpha_ = std::clamp(x_ema_alpha_, 0.01F, 1.0F);
   spike_dx_max_ = std::max(0.0F, spike_dx_max_);
+
+  this->get_parameter("use_clustering", use_clustering_);
+  {
+    double pad = 0.03;
+    this->get_parameter("self_filter.enabled", self_filter_enabled_);
+    this->get_parameter("self_filter.padding", pad);
+    self_filter_padding_ = static_cast<float>(std::max(0.0, pad));
+    this->get_parameter("self_filter.frames",  self_filter_frames_);
+    this->get_parameter("self_filter.size_x",  self_filter_size_x_);
+    this->get_parameter("self_filter.size_y",  self_filter_size_y_);
+    this->get_parameter("self_filter.size_z",  self_filter_size_z_);
+    this->get_parameter("self_filter.offset_x", self_filter_off_x_);
+    this->get_parameter("self_filter.offset_y", self_filter_off_y_);
+    this->get_parameter("self_filter.offset_z", self_filter_off_z_);
+
+    const size_t n = self_filter_frames_.size();
+    // Offsets are optional; default to zero when omitted.
+    if (self_filter_off_x_.empty()) self_filter_off_x_.assign(n, 0.0);
+    if (self_filter_off_y_.empty()) self_filter_off_y_.assign(n, 0.0);
+    if (self_filter_off_z_.empty()) self_filter_off_z_.assign(n, 0.0);
+
+    const bool lengths_ok =
+        self_filter_size_x_.size() == n && self_filter_size_y_.size() == n &&
+        self_filter_size_z_.size() == n && self_filter_off_x_.size() == n &&
+        self_filter_off_y_.size() == n && self_filter_off_z_.size() == n;
+    if (self_filter_enabled_ && (n == 0 || !lengths_ok)) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "self_filter disabled: frames=%zu but size/offset array "
+                   "lengths do not match. Check self_filter.* params.",
+                   n);
+      self_filter_enabled_ = false;
+    }
+    if (self_filter_enabled_) {
+      RCLCPP_INFO(this->get_logger(),
+                  "self_filter enabled: %zu volume(s), padding=%.3fm", n,
+                  self_filter_padding_);
+    }
+    if (!use_clustering_ && !self_filter_enabled_) {
+      RCLCPP_WARN(this->get_logger(),
+                  "use_clustering=false WITHOUT self_filter: nearest-point x "
+                  "may lock onto robot self points. Configure self_filter.");
+    }
+  }
 
   roi_filter_->setParameters(leaf_size_, mean_k_, stddev_mul_thresh_,
                               ground_height_, cluster_tolerance_,
@@ -286,6 +340,11 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
     }
   }
 
+  // Remove robot self points (TF-driven box exclusion) before any target logic.
+  // Critical when use_clustering=false, where the nearest point is taken as the
+  // target and must never be the robot itself.
+  applySelfFilter(cloud_, msg->header.stamp);
+
   if (cloud_->empty()) {
     publishInvalid();
     return;
@@ -300,42 +359,47 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
     debug_cloud_pub_->publish(out);
   }
 
-  // Clustering
-  kdtree_->setInputCloud(cloud_);
-  Eigen::Vector2f anchor_base;
-  const Eigen::Vector2f *anchor_ptr = nullptr;
-  if (aim_anchor_captured_ && anchorInBase(msg->header.stamp, anchor_base)) {
-    anchor_ptr = &anchor_base;
-  }
-  roi_filter_->cluster_points(cloud_, kdtree_, min_cluster_area_, anchor_ptr);
-  if (cloud_->empty()) {
-    publishInvalid();
-    return;
-  }
-
-  // XY projection. OBB/anchor is retained only for target association and RViz;
-  // longitudinal control below no longer depends on its normal/yaw estimate.
-  roi_filter_->projection_filter(cloud_);
-  OBB        obb         = plane_filter_->compute_OBB(cloud_);
-  TargetEdge target_edge = edge_extractor_->extract_edges(
-      obb.center, obb.axis1, obb.axis2, obb.length1, obb.length2);
-
-  publishOBB(obb);
-
-  // Aim anchor
-  if (!aim_anchor_captured_ && target_edge.target_length > 0.1F) {
-    captureAimAnchor(target_edge, msg->header.stamp);
-  }
-  if (aim_anchor_captured_) {
-    Eigen::Vector2f projected;
-    if (projectAnchorOnEdge(target_edge, msg->header.stamp, projected)) {
-      target_edge.target_center = projected;
+  // Target selection by clustering (optional). When disabled, the ROI +
+  // self-filtered cloud is used directly and the front slice below treats the
+  // nearest surface as the target — collision-safe, since anything closer than
+  // the real target is what the base must stop in front of.
+  if (use_clustering_) {
+    kdtree_->setInputCloud(cloud_);
+    Eigen::Vector2f anchor_base;
+    const Eigen::Vector2f *anchor_ptr = nullptr;
+    if (aim_anchor_captured_ && anchorInBase(msg->header.stamp, anchor_base)) {
+      anchor_ptr = &anchor_base;
     }
-  }
-  publishTargetEdge(target_edge);
+    roi_filter_->cluster_points(cloud_, kdtree_, min_cluster_area_, anchor_ptr);
+    if (cloud_->empty()) {
+      publishInvalid();
+      return;
+    }
 
-  // Keep only the nearest X fraction of the selected target cluster. The
-  // median of that front slice is a robust representative surface distance.
+    // XY projection. OBB/anchor is retained only for target association and RViz;
+    // longitudinal control below no longer depends on its normal/yaw estimate.
+    roi_filter_->projection_filter(cloud_);
+    OBB        obb         = plane_filter_->compute_OBB(cloud_);
+    TargetEdge target_edge = edge_extractor_->extract_edges(
+        obb.center, obb.axis1, obb.axis2, obb.length1, obb.length2);
+
+    publishOBB(obb);
+
+    // Aim anchor
+    if (!aim_anchor_captured_ && target_edge.target_length > 0.1F) {
+      captureAimAnchor(target_edge, msg->header.stamp);
+    }
+    if (aim_anchor_captured_) {
+      Eigen::Vector2f projected;
+      if (projectAnchorOnEdge(target_edge, msg->header.stamp, projected)) {
+        target_edge.target_center = projected;
+      }
+    }
+    publishTargetEdge(target_edge);
+  }
+
+  // Keep only the nearest X fraction of the (selected) cloud. The median of
+  // that front slice is a robust representative surface distance.
   float representative_x = 0.0F;
   float representative_y = 0.0F;
   if (!keepFrontFraction(cloud_, front_slice_ratio_, front_min_points_,
@@ -358,17 +422,33 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   candidate.y = 0.0F;
   candidate.degree_theta = 0.0F;
 
-  // X-only spike rejection + EMA. Y and theta belong to neither the
-  // longitudinal detector nor its controller path.
+  // X-only spike handling + EMA. The rejection is ASYMMETRIC by design:
+  //  - A sudden DECREASE (something got closer) is accepted immediately. For
+  //    collision safety the base must react to the nearest obstacle now; never
+  //    hold a stale, farther value while moving forward.
+  //  - A sudden INCREASE (target appears farther) is likely a dropout/occlusion
+  //    artifact, so it is verified for a few frames before being trusted.
+  //  - Small changes are EMA-smoothed.
+  // Y and theta belong to neither the longitudinal detector nor its controller.
   if (!se2_initialized_) {
     se2_cached_      = candidate;
     se2_initialized_ = true;
     consecutive_outliers_ = 0;
     initial_dist_ = std::abs(candidate.x);
   } else {
-    const float dx = std::abs(candidate.x - se2_cached_.x);
-    const bool spike = dx > spike_dx_max_;
-    if (spike) {
+    const float delta = candidate.x - se2_cached_.x;  // >0 farther, <0 closer
+    if (delta < -spike_dx_max_) {
+      // Closer than expected → react immediately (no hold, no smoothing lag).
+      if (debug_log_) {
+        RCLCPP_WARN_THROTTLE(
+            this->get_logger(), *this->get_clock(), 500,
+            "x got closer fast: cached=%.3f candidate=%.3f → accept now",
+            se2_cached_.x, candidate.x);
+      }
+      se2_cached_           = candidate;
+      consecutive_outliers_ = 0;
+    } else if (delta > spike_dx_max_) {
+      // Farther than expected → verify before trusting; hold meanwhile.
       if (++consecutive_outliers_ >= max_consecutive_outliers_) {
         se2_cached_           = candidate;
         consecutive_outliers_ = 0;
@@ -376,12 +456,10 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
         if (debug_log_) {
           RCLCPP_WARN_THROTTLE(
               this->get_logger(), *this->get_clock(), 500,
-              "Rejecting x spike: cached=%.3f candidate=%.3f count=%d/%d",
+              "Rejecting x increase: cached=%.3f candidate=%.3f count=%d/%d",
               se2_cached_.x, candidate.x, consecutive_outliers_,
               max_consecutive_outliers_);
         }
-        // Never publish the stale cached x as valid while a large change is
-        // being verified. The manager will hold the robot instead.
         publishInvalid();
         return;
       }
@@ -443,6 +521,84 @@ bool PCDetector::getTransform(const std::string &tgt, const std::string &src,
 void PCDetector::applySpatialRoi(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud) {
   applySpatialRoiBounds(cloud, roi_x_min_, roi_x_max_, roi_y_abs_near_,
                         roi_y_abs_max_, roi_z_max_);
+}
+
+void PCDetector::applySelfFilter(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
+                                 const rclcpp::Time &stamp) {
+  if (!self_filter_enabled_ || self_filter_frames_.empty() || !cloud ||
+      cloud->empty()) {
+    return;
+  }
+
+  // Each volume is an axis-aligned box in its link frame. We look up the live
+  // base_nav→link transform at the cloud stamp (so a moving arm is handled),
+  // map every point into the link frame, and drop points inside any box.
+  struct Vol {
+    Eigen::Affine3f T_link_base;  // maps a target_frame point into the link frame
+    Eigen::Vector3f half;
+    Eigen::Vector3f center;
+  };
+  std::vector<Vol> vols;
+  vols.reserve(self_filter_frames_.size());
+  for (size_t i = 0; i < self_filter_frames_.size(); ++i) {
+    geometry_msgs::msg::TransformStamped tf;
+    if (!getTransform(self_filter_frames_[i], target_frame_, tf, stamp)) {
+      // Missing TF for this link: skip just this volume rather than the frame.
+      continue;
+    }
+    Eigen::Affine3f T = Eigen::Affine3f::Identity();
+    const auto &t = tf.transform.translation;
+    const auto &q = tf.transform.rotation;
+    T.translation() << static_cast<float>(t.x), static_cast<float>(t.y),
+        static_cast<float>(t.z);
+    T.linear() = Eigen::Quaternionf(
+                     static_cast<float>(q.w), static_cast<float>(q.x),
+                     static_cast<float>(q.y), static_cast<float>(q.z))
+                     .toRotationMatrix();
+    Vol v;
+    v.T_link_base = T;
+    v.half = Eigen::Vector3f(static_cast<float>(self_filter_size_x_[i]),
+                             static_cast<float>(self_filter_size_y_[i]),
+                             static_cast<float>(self_filter_size_z_[i])) *
+                 0.5F +
+             Eigen::Vector3f::Constant(self_filter_padding_);
+    v.center = Eigen::Vector3f(static_cast<float>(self_filter_off_x_[i]),
+                               static_cast<float>(self_filter_off_y_[i]),
+                               static_cast<float>(self_filter_off_z_[i]));
+    vols.push_back(v);
+  }
+  if (vols.empty()) return;
+
+  auto out = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+  out->points.reserve(cloud->points.size());
+  std::size_t removed = 0;
+  for (const auto &p : cloud->points) {
+    const Eigen::Vector3f pb(p.x, p.y, p.z);
+    bool inside_any = false;
+    for (const auto &v : vols) {
+      const Eigen::Vector3f pl = v.T_link_base * pb - v.center;
+      if (std::abs(pl.x()) <= v.half.x() && std::abs(pl.y()) <= v.half.y() &&
+          std::abs(pl.z()) <= v.half.z()) {
+        inside_any = true;
+        break;
+      }
+    }
+    if (inside_any) {
+      ++removed;
+    } else {
+      out->points.push_back(p);
+    }
+  }
+  out->width    = static_cast<std::uint32_t>(out->points.size());
+  out->height   = 1;
+  out->is_dense = false;
+  cloud = out;
+
+  if (debug_log_) {
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                         "self_filter: removed %zu pts, %zu remain", removed,
+                         cloud->points.size());
+  }
 }
 
 bool PCDetector::captureAimAnchor(const TargetEdge &edge, const rclcpp::Time &stamp) {

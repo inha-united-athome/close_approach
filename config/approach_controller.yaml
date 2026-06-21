@@ -14,3 +14,9 @@ approach_controller:
     decel_dist_max: 0.15   # m, 감속 구간 최대 길이 (0.20→0.10: 감속 구간 절반)
     decel_dist_min: 0.04   # m, 감속 구간 최소 길이
     decel_ratio:    0.3    # initial_dist 대비 감속 구간 비율 (0.5→0.3: 더 늦게 감속 시작)
+
+    # 출력 가속도 제한 (slew rate). 이산적인 x/검출 valid 변화가 cmd_vel
+    # 급변(끊김)으로 이어지지 않도록 명령을 부드럽게 램프한다.
+    lin_accel_limit: 0.5   # m/s², 0→max_v 약 0.4초
+    lin_decel_limit: 1.0   # m/s², 정지는 더 빠르게 (안전)
+    ang_accel_limit: 2.0   # rad/s²

@@ -26,6 +26,9 @@ private:
   float kp_theta_, ki_theta_, kd_theta_;
   float max_v_, max_w_;
   float decel_dist_max_, decel_dist_min_, decel_ratio_;
+  // Output slew-rate limits (m/s^2, rad/s^2). Smooth discrete error/validity
+  // changes into continuous cmd_vel so the base does not jerk or stutter.
+  float lin_accel_limit_, lin_decel_limit_, ang_accel_limit_;
   bool debug_log_ = true;
 
   // Runtime state
@@ -33,6 +36,14 @@ private:
   bool  initial_dist_set_= false;
   rclcpp::Time prev_time_;
   bool         prev_time_valid_ = false;
+  // Last published command, fed back into the slew limiter.
+  float last_vx_ = 0.0f;
+  float last_wz_ = 0.0f;
+
+  // Rate-limit one axis toward target; accel/decel chosen by whether the
+  // command magnitude grows (speeding up) or shrinks (slowing down).
+  static float slew(float current, float target, float dt,
+                    float accel_limit, float decel_limit);
 
   void errorCallback(const ApproachError::ConstSharedPtr &msg);
   void activeCallback(const std_msgs::msg::Bool::SharedPtr msg);

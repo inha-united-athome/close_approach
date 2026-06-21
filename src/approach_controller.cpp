@@ -16,6 +16,9 @@ ApproachController::ApproachController() : Node("approach_controller") {
   this->declare_parameter<float>("decel_dist_max",  0.20F);
   this->declare_parameter<float>("decel_dist_min",  0.05F);
   this->declare_parameter<float>("decel_ratio",     0.5F);
+  this->declare_parameter<float>("lin_accel_limit", 0.5F);
+  this->declare_parameter<float>("lin_decel_limit", 1.0F);
+  this->declare_parameter<float>("ang_accel_limit", 2.0F);
   this->declare_parameter<bool>("debug_log",        true);
 
   this->get_parameter("kp_x",           kp_x_);
@@ -29,6 +32,9 @@ ApproachController::ApproachController() : Node("approach_controller") {
   this->get_parameter("decel_dist_max", decel_dist_max_);
   this->get_parameter("decel_dist_min", decel_dist_min_);
   this->get_parameter("decel_ratio",    decel_ratio_);
+  this->get_parameter("lin_accel_limit", lin_accel_limit_);
+  this->get_parameter("lin_decel_limit", lin_decel_limit_);
+  this->get_parameter("ang_accel_limit", ang_accel_limit_);
   this->get_parameter("debug_log",      debug_log_);
 
   pid_ = std::make_shared<PIDController>();
@@ -59,6 +65,8 @@ void ApproachController::activeCallback(const std_msgs::msg::Bool::SharedPtr msg
   initial_dist_set_ = false;
   initial_dist_     = 0.0f;
   prev_time_valid_  = false;
+  last_vx_          = 0.0f;
+  last_wz_          = 0.0f;
 
   if (msg->data) {
     RCLCPP_INFO(this->get_logger(),
@@ -72,21 +80,19 @@ void ApproachController::activeCallback(const std_msgs::msg::Bool::SharedPtr msg
   }
 }
 
+float ApproachController::slew(float current, float target, float dt,
+                               float accel_limit, float decel_limit) {
+  if (dt <= 0.0f) return target;
+  const bool speeding_up = std::abs(target) > std::abs(current);
+  const float step = (speeding_up ? accel_limit : decel_limit) * dt;
+  const float delta = target - current;
+  if (std::abs(delta) <= step) return target;
+  return current + std::copysign(step, delta);
+}
+
 void ApproachController::errorCallback(const ApproachError::ConstSharedPtr &msg) {
-  // Publish stop if not valid
-  if (!msg->valid) {
-    geometry_msgs::msg::Twist stop;
-    cmd_vel_pub_->publish(stop);
-    return;
-  }
-
-  // Capture initial distance for decel ramp
-  if (!initial_dist_set_ && msg->initial_dist_m > 0.0f) {
-    initial_dist_    = msg->initial_dist_m;
-    initial_dist_set_= true;
-  }
-
-  // dt
+  // dt is computed for every message (valid or not) so the slew limiter keeps
+  // a consistent time base while ramping down through invalid frames.
   const rclcpp::Time now = msg->header.stamp;
   float dt = 0.05f;  // default 20 Hz
   if (prev_time_valid_) {
@@ -96,30 +102,56 @@ void ApproachController::errorCallback(const ApproachError::ConstSharedPtr &msg)
   prev_time_       = now;
   prev_time_valid_ = true;
 
-  // Decel ramp (using initial_dist and current x_error)
-  float v_scale = 1.0f;
-  if (initial_dist_set_ && initial_dist_ > 0.0f) {
-    const float eff_decel = std::clamp(
-        initial_dist_ * decel_ratio_, decel_dist_min_, decel_dist_max_);
-    v_scale = std::clamp(std::abs(msg->x_error) / eff_decel, 0.0f, 1.0f);
+  // Decide the target command. An invalid error means "stop", but we ramp the
+  // command toward zero instead of snapping to it, so a brief detection dropout
+  // no longer produces a hard stop/go stutter.
+  float target_vx = 0.0f;
+  float target_wz = 0.0f;
+  float v_scale   = 0.0f;
+
+  if (msg->valid) {
+    // Capture initial distance for decel ramp
+    if (!initial_dist_set_ && msg->initial_dist_m > 0.0f) {
+      initial_dist_    = msg->initial_dist_m;
+      initial_dist_set_= true;
+    }
+
+    // Decel ramp (using initial_dist and current x_error)
+    v_scale = 1.0f;
+    if (initial_dist_set_ && initial_dist_ > 0.0f) {
+      const float eff_decel = std::clamp(
+          initial_dist_ * decel_ratio_, decel_dist_min_, decel_dist_max_);
+      v_scale = std::clamp(std::abs(msg->x_error) / eff_decel, 0.0f, 1.0f);
+    }
+
+    // Build SE2Error: x from PC, y=0, degree_theta from image (already in rad)
+    SE2Error se2;
+    se2.x            = msg->x_error;
+    se2.y            = 0.0f;
+    se2.degree_theta = msg->theta_error;  // PIDController expects radians despite the name
+
+    const auto cmd = pid_->compute_control(se2, dt, v_scale);
+    target_vx = static_cast<float>(cmd.linear.x);
+    target_wz = static_cast<float>(cmd.angular.z);
   }
 
-  // Build SE2Error: x from PC, y=0, degree_theta from image (already in rad)
-  SE2Error se2;
-  se2.x            = msg->x_error;
-  se2.y            = 0.0f;
-  se2.degree_theta = msg->theta_error;  // PIDController expects radians despite the name
+  // Slew-rate limit both axes so discrete x updates, yaw initialization, and
+  // validity toggles turn into continuous motion.
+  last_vx_ = slew(last_vx_, target_vx, dt, lin_accel_limit_, lin_decel_limit_);
+  last_wz_ = slew(last_wz_, target_wz, dt, ang_accel_limit_, ang_accel_limit_);
 
-  const auto cmd = pid_->compute_control(se2, dt, v_scale);
-  cmd_vel_pub_->publish(cmd);
+  geometry_msgs::msg::Twist out;
+  out.linear.x  = last_vx_;
+  out.angular.z = last_wz_;
+  cmd_vel_pub_->publish(out);
 
   if (debug_log_) {
     RCLCPP_INFO_THROTTLE(
         this->get_logger(), *this->get_clock(), 300,
-        "control x=%.4f theta=%.4f rad (%.2f deg) dt=%.3f v_scale=%.2f -> vx=%.4f wz=%.4f",
-        se2.x, se2.degree_theta,
-        se2.degree_theta * 180.0f / static_cast<float>(M_PI), dt, v_scale,
-        cmd.linear.x, cmd.angular.z);
+        "control valid=%d x=%.4f theta=%.4f rad dt=%.3f v_scale=%.2f "
+        "target(vx=%.4f wz=%.4f) -> cmd(vx=%.4f wz=%.4f)",
+        msg->valid, msg->x_error, msg->theta_error, dt, v_scale,
+        target_vx, target_wz, last_vx_, last_wz_);
   }
 }
 

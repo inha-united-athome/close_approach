@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include <Eigen/Dense>
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -73,6 +74,19 @@ private:
   float lidar_max_age_sec_;
   bool  debug_log_ = true;
 
+  // Target selection: when false, skip Euclidean clustering and run the front
+  // slice directly on the ROI + self-filtered cloud (nearest-obstacle = target).
+  bool  use_clustering_ = true;
+
+  // Robot self filter (TF-driven box exclusion). Each volume is a box defined
+  // in a robot link frame; points inside any box (after live TF lookup) are
+  // dropped so the nearest-point logic never locks onto the robot itself.
+  bool  self_filter_enabled_ = false;
+  float self_filter_padding_ = 0.0F;
+  std::vector<std::string> self_filter_frames_;
+  std::vector<double> self_filter_size_x_, self_filter_size_y_, self_filter_size_z_;
+  std::vector<double> self_filter_off_x_,  self_filter_off_y_,  self_filter_off_z_;
+
   // State
   bool  received_camera_info_ = false;
   std::atomic<bool> is_active_{false};
@@ -107,6 +121,8 @@ private:
                     geometry_msgs::msg::TransformStamped &tf_out,
                     const rclcpp::Time &stamp = rclcpp::Time(0));
   void applySpatialRoi(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud);
+  void applySelfFilter(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
+                       const rclcpp::Time &stamp);
   bool captureAimAnchor(const TargetEdge &edge, const rclcpp::Time &stamp);
   bool anchorInBase(const rclcpp::Time &stamp, Eigen::Vector2f &out_xy);
   bool projectAnchorOnEdge(const TargetEdge &edge, const rclcpp::Time &stamp,

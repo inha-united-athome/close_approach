@@ -64,7 +64,10 @@ private:
   float                    last_good_x_err_   = 0.0f;  // last valid longitudinal x
   float                    last_theta_rad_    = 0.0f;
   bool                     theta_initialized_ = false;
-  rclcpp::Time             last_theta_time_;           // time of last fresh theta
+  rclcpp::Time             last_theta_time_;           // time of last fresh edge theta
+  float                    last_pc_yaw_       = 0.0f;   // plane-normal yaw fallback
+  bool                     pc_yaw_valid_      = false;
+  rclcpp::Time             last_pc_yaw_time_;
 
   // State machine
   State       state_               = State::IDLE;

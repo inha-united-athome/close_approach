@@ -55,6 +55,12 @@ ApproachManager::ApproachManager()
           last_valid_pc_time_ = this->now();
           last_good_x_err_    = msg->x_error;
         }
+        // Plane-normal yaw fallback (used only when edge yaw is stale).
+        if (msg->yaw_valid) {
+          last_pc_yaw_      = msg->theta_error;
+          pc_yaw_valid_     = true;
+          last_pc_yaw_time_ = this->now();
+        }
       });
 
   edge_error_sub_ = this->create_subscription<ApproachError>(
@@ -224,19 +230,25 @@ void ApproachManager::stateMachineCallback() {
       (now - last_valid_pc_time_).seconds() >
           static_cast<double>(pc_timeout_sec_);
 
-  // Yaw freshness: a held (stale) edge value must NOT keep the robot rotating.
-  // If no fresh yaw arrived within theta_timeout_sec, command 0 yaw (the slew
-  // limiter then ramps the rotation down to a stop).
-  const bool theta_fresh = theta_initialized_ &&
-      (now - last_theta_time_).seconds() <=
-          static_cast<double>(theta_timeout_sec_);
-  const float theta_err = theta_fresh ? last_theta_rad_ : 0.0f;
+  // Yaw source priority: fresh image edge yaw → else plane-normal yaw fallback
+  // (vertical surface) → else 0. A held (stale) value must NOT keep the robot
+  // rotating; when neither source is fresh we command 0 yaw and the slew limiter
+  // ramps the rotation down to a stop.
+  const double theta_to = static_cast<double>(theta_timeout_sec_);
+  const bool edge_fresh = theta_initialized_ &&
+      (now - last_theta_time_).seconds() <= theta_to;
+  const bool pc_yaw_fresh = pc_yaw_valid_ &&
+      (now - last_pc_yaw_time_).seconds() <= theta_to;
+  const bool theta_fresh = edge_fresh || pc_yaw_fresh;
+  const float theta_err =
+      edge_fresh ? last_theta_rad_ : (pc_yaw_fresh ? last_pc_yaw_ : 0.0f);
   if (debug_log_) {
     RCLCPP_INFO_THROTTLE(
         this->get_logger(), *this->get_clock(), 300,
-        "manager state=%s x_valid=%d held=%d x=%.4f theta=%.4f rad (%.2f deg) theta_fresh=%d",
-        stateStr(), x_valid, x_held, x_err, theta_err,
-        theta_err * 180.0f / static_cast<float>(M_PI), theta_fresh);
+        "manager state=%s x_valid=%d held=%d x=%.4f theta=%.4f deg src=%s",
+        stateStr(), x_valid, x_held, x_err,
+        theta_err * 180.0f / static_cast<float>(M_PI),
+        edge_fresh ? "edge" : (pc_yaw_fresh ? "pc_plane" : "none"));
   }
 
   // Build control_error to send to controller
@@ -435,6 +447,9 @@ void ApproachManager::startApproach(float standoff) {
   theta_initialized_   = false;
   last_theta_rad_      = 0.0f;
   last_theta_time_     = this->now();
+  pc_yaw_valid_        = false;
+  last_pc_yaw_         = 0.0f;
+  last_pc_yaw_time_    = this->now();
   x_convergence_pending_ = false;
   last_valid_pc_time_  = this->now();
 
@@ -476,6 +491,9 @@ void ApproachManager::stopApproach() {
   theta_initialized_ = false;
   last_theta_rad_ = 0.0F;
   last_theta_time_ = this->now();
+  pc_yaw_valid_ = false;
+  last_pc_yaw_ = 0.0F;
+  last_pc_yaw_time_ = this->now();
   initial_dist_set_ = false;
   initial_dist_ = 0.0F;
   x_convergence_pending_ = false;

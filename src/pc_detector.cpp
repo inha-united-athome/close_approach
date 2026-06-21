@@ -7,6 +7,11 @@
 #include <limits>
 
 #include <pcl/io/pcd_io.h>
+#include <pcl/ModelCoefficients.h>
+#include <pcl/PointIndices.h>
+#include <pcl/sample_consensus/method_types.h>
+#include <pcl/sample_consensus/model_types.h>
+#include <pcl/segmentation/sac_segmentation.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/utils.h>
@@ -208,6 +213,29 @@ PCDetector::PCDetector()
     }
   }
 
+  {
+    double band = 0.15, dist = 0.02, nz = 0.4, maxyaw = 45.0, sign = 1.0;
+    int min_in = 50;
+    this->declare_parameter<double>("yaw_plane.band", band);
+    this->declare_parameter<double>("yaw_plane.dist_thresh", dist);
+    this->declare_parameter<int>("yaw_plane.min_inliers", min_in);
+    this->declare_parameter<double>("yaw_plane.max_normal_z", nz);
+    this->declare_parameter<double>("yaw_plane.max_yaw_deg", maxyaw);
+    this->declare_parameter<double>("yaw_plane.sign", sign);
+    this->get_parameter("yaw_plane.band", band);
+    this->get_parameter("yaw_plane.dist_thresh", dist);
+    this->get_parameter("yaw_plane.min_inliers", min_in);
+    this->get_parameter("yaw_plane.max_normal_z", nz);
+    this->get_parameter("yaw_plane.max_yaw_deg", maxyaw);
+    this->get_parameter("yaw_plane.sign", sign);
+    yaw_plane_band_         = static_cast<float>(std::max(0.02, band));
+    yaw_plane_dist_thresh_  = static_cast<float>(std::max(0.001, dist));
+    yaw_plane_min_inliers_  = std::max(3, min_in);
+    yaw_plane_max_normal_z_ = static_cast<float>(std::clamp(nz, 0.0, 1.0));
+    yaw_plane_max_yaw_deg_  = static_cast<float>(std::clamp(maxyaw, 1.0, 90.0));
+    yaw_plane_sign_         = (sign < 0.0) ? -1.0F : 1.0F;
+  }
+
   roi_filter_->setParameters(leaf_size_, mean_k_, stddev_mul_thresh_,
                               ground_height_, cluster_tolerance_,
                               min_cluster_size_, max_cluster_size_);
@@ -350,6 +378,10 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
     return;
   }
 
+  // Snapshot the broad ROI + self-filtered cloud (3D) before clustering/front
+  // slicing reassign cloud_. Used for the plane-normal yaw fallback.
+  pcl::PointCloud<pcl::PointXYZ>::Ptr yaw_src = cloud_;
+
   // Debug cloud
   {
     sensor_msgs::msg::PointCloud2 out;
@@ -472,13 +504,19 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
     }
   }
 
-  // Publish x only. Theta comes from depth edge and y is intentionally unused.
+  // Plane-normal yaw fallback (x is already settled above, so this never delays
+  // the longitudinal estimate). Only the near surface around representative_x is
+  // used, so a far wall inside the ROI behind the target is discarded.
+  float surface_yaw = 0.0f;
+  const bool yaw_ok = computeSurfaceYaw(yaw_src, representative_x, surface_yaw);
+
   ApproachError err;
   err.header.stamp    = msg->header.stamp;
   err.valid           = true;
   err.x_error         = se2_cached_.x;
   err.y_error         = 0.0f;
-  err.theta_error     = 0.0f;   // theta comes from edge_detector
+  err.theta_error     = yaw_ok ? surface_yaw : 0.0f;  // edge yaw stays primary
+  err.yaw_valid       = yaw_ok;
   err.initial_dist_m  = initial_dist_;
   err.mean_y_px       = 0.0f;
   pc_error_pub_->publish(err);
@@ -486,11 +524,69 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   if (debug_log_) {
     RCLCPP_INFO_THROTTLE(
         this->get_logger(), *this->get_clock(), 300,
-        "pc_error valid=1 x=%.4fm surface_x=%.4fm surface_y=%.4fm "
+        "pc_error valid=1 x=%.4fm surface_x=%.4fm yaw_valid=%d yaw=%.2fdeg "
         "init=%.4fm front=%zu(%.1f%%)",
-        err.x_error, representative_x, representative_y, err.initial_dist_m,
+        err.x_error, representative_x, yaw_ok,
+        surface_yaw * 180.0f / static_cast<float>(M_PI), err.initial_dist_m,
         cloud_->size(), front_slice_ratio_ * 100.0F);
   }
+}
+
+bool PCDetector::computeSurfaceYaw(
+    const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, float ref_x,
+    float &yaw_out) {
+  if (!cloud || cloud->empty()) return false;
+
+  // Near band: keep only points up to yaw_plane_band beyond the near surface,
+  // so a far wall behind the target (still inside the ROI) is excluded.
+  auto band = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+  band->points.reserve(cloud->points.size());
+  const float x_hi = ref_x + yaw_plane_band_;
+  for (const auto &p : cloud->points) {
+    if (p.x <= x_hi) band->points.push_back(p);
+  }
+  band->width = static_cast<std::uint32_t>(band->points.size());
+  band->height = 1;
+  band->is_dense = false;
+  if (static_cast<int>(band->points.size()) < yaw_plane_min_inliers_) {
+    return false;
+  }
+
+  pcl::ModelCoefficients coeff;
+  pcl::PointIndices inliers;
+  pcl::SACSegmentation<pcl::PointXYZ> seg;
+  seg.setOptimizeCoefficients(true);
+  seg.setModelType(pcl::SACMODEL_PLANE);
+  seg.setMethodType(pcl::SAC_RANSAC);
+  seg.setDistanceThreshold(yaw_plane_dist_thresh_);
+  seg.setMaxIterations(100);
+  seg.setInputCloud(band);
+  seg.segment(inliers, coeff);
+  if (coeff.values.size() < 4 ||
+      static_cast<int>(inliers.indices.size()) < yaw_plane_min_inliers_) {
+    return false;
+  }
+
+  float a = coeff.values[0], b = coeff.values[1], c = coeff.values[2];
+  const float norm = std::sqrt(a * a + b * b + c * c);
+  if (norm < 1e-6f) return false;
+  a /= norm; b /= norm; c /= norm;
+
+  // Vertical-surface gate: a tabletop (normal ~vertical) is left to the edge
+  // detector. Only near-vertical planes (normal ~horizontal) yield a yaw.
+  if (std::abs(c) > yaw_plane_max_normal_z_) return false;
+
+  // Orient the normal to point into the surface (away from the robot, +x).
+  if (a < 0.0f) { a = -a; b = -b; }
+  // Yaw the robot must turn so its forward axis faces the surface squarely.
+  const float yaw = yaw_plane_sign_ * std::atan2(b, a);
+  if (std::abs(yaw) >
+      yaw_plane_max_yaw_deg_ * static_cast<float>(M_PI) / 180.0f) {
+    return false;  // implausibly large → likely not the surface we approach
+  }
+
+  yaw_out = yaw;
+  return true;
 }
 
 void PCDetector::publishInvalid() {

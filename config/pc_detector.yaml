@@ -28,6 +28,18 @@ pc_detector:
     #        (충돌 안전: 표적보다 가까운 건 베이스가 멈춰야 할 대상).
     use_clustering: false
 
+    # 평면 normal 기반 yaw fallback (이미지 엣지가 stale일 때만 매니저가 사용).
+    # 근접 표면(ref_x + band 이내)에만 평면 RANSAC → normal이 거의 수평이면
+    # = 벽/전면판 → 그 normal로 yaw. 테이블 윗면(normal 수직)이면 무효(엣지 담당).
+    # ref_x 이내만 보므로 ROI 안의 '표적 뒤 먼 벽'은 자동 제외됨.
+    yaw_plane:
+      band:         0.15   # m, 근접 표면에서 이 깊이까지만 평면 fit (먼 벽 배제)
+      dist_thresh:  0.02   # m, RANSAC inlier 거리
+      min_inliers:  50     # 이 미만이면 yaw 무효
+      max_normal_z: 0.4    # |n_z| 이하만 '수직면'으로 인정 (테이블 윗면 배제)
+      max_yaw_deg:  45.0   # 계산 yaw가 이보다 크면 오검출로 보고 무효
+      sign:         1.0    # 엣지 yaw 부호와 맞추려면 -1.0로 뒤집기 (실측 확인)
+
     # 로봇 자기 점 제거 (TF 기반 박스 제외). 각 박스는 링크 프레임 기준이며
     # cloud stamp 시점의 base_nav→link TF로 위치시킨다(움직이는 팔도 대응).
     # RBY1_A_v1.1 URDF의 capsule collision을 각 링크 프레임의 AABB 박스로 변환한 값.

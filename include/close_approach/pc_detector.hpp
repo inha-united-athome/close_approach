@@ -87,6 +87,16 @@ private:
   std::vector<double> self_filter_size_x_, self_filter_size_y_, self_filter_size_z_;
   std::vector<double> self_filter_off_x_,  self_filter_off_y_,  self_filter_off_z_;
 
+  // Plane-normal yaw fallback: for a vertical surface (wall/front panel) near the
+  // target distance, fit a plane and derive yaw from its horizontal normal. Used
+  // by the manager only when the image edge yaw is stale.
+  float yaw_plane_band_         = 0.15F;  // m, depth band from the near surface
+  float yaw_plane_dist_thresh_  = 0.02F;  // m, RANSAC inlier distance
+  int   yaw_plane_min_inliers_  = 50;
+  float yaw_plane_max_normal_z_ = 0.4F;   // |n_z| below this = vertical surface
+  float yaw_plane_max_yaw_deg_  = 45.0F;  // |yaw| beyond this → treat as misdetect
+  float yaw_plane_sign_         = 1.0F;   // flip to match edge yaw sign convention
+
   // State
   bool  received_camera_info_ = false;
   std::atomic<bool> is_active_{false};
@@ -123,6 +133,11 @@ private:
   void applySpatialRoi(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud);
   void applySelfFilter(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
                        const rclcpp::Time &stamp);
+  // Fit a plane to the near surface (within yaw_plane_band of ref_x, so a far
+  // wall behind the target is discarded) and, if it is vertical enough, return
+  // the yaw needed to face it. False = not a usable vertical surface.
+  bool computeSurfaceYaw(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
+                         float ref_x, float &yaw_out);
   bool captureAimAnchor(const TargetEdge &edge, const rclcpp::Time &stamp);
   bool anchorInBase(const rclcpp::Time &stamp, Eigen::Vector2f &out_xy);
   bool projectAnchorOnEdge(const TargetEdge &edge, const rclcpp::Time &stamp,

@@ -5,8 +5,6 @@
 
 
 #include "inha_interfaces/action/align_decider.hpp"
-
-
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <tf2_ros/buffer.h>

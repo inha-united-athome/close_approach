@@ -535,6 +535,7 @@ ament_target_dependencies(align_decider_node
   tf2_ros
   tf2_geometry_msgs
   inha_interfaces
+<<<<<<< HEAD
 )
 
 ament_target_dependencies(y_decider_node
@@ -559,6 +560,8 @@ ament_target_dependencies(y_nav_goal_decider_node
   tf2
   tf2_ros
   inha_interfaces
+=======
+>>>>>>> c105935 (임시 얼라인)
 )
 
 ament_target_dependencies(align_measure_node

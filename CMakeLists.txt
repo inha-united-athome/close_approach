@@ -51,8 +51,7 @@ find_package(inha_interfaces REQUIRED)
 # =========================
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ApproachError.msg"
-  "action/AlignDecision.action"
-  DEPENDENCIES std_msgs geometry_msgs
+  DEPENDENCIES std_msgs
 )
 
 # =========================
@@ -499,6 +498,7 @@ ament_target_dependencies(align_decider_node
   tf2
   tf2_ros
   tf2_geometry_msgs
+  inha_interfaces
 )
 
 ament_target_dependencies(self_filter_tuner_node
@@ -734,7 +734,7 @@ rosidl_get_typesupport_target(cpp_typesupport_target
 
 foreach(_target pc_detector_node edge_detector_node depth_edge_detector_node
                 approach_manager_node approach_controller_node
-                approach_debug_logger_node align_decider_node)
+                approach_debug_logger_node)
   target_link_libraries(${_target} "${cpp_typesupport_target}")
 endforeach()
 

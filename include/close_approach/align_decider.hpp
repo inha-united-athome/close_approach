@@ -3,7 +3,7 @@
 #include <memory>
 #include <string>
 
-#include "close_approach/action/align_decision.hpp"
+#include "inha_interfaces/action/align_decider.hpp"
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
@@ -24,14 +24,14 @@ public:
   AlignDeciderNode();
 
 private:
-  using AlignDecision = close_approach::action::AlignDecision;
-  using GoalHandle = rclcpp_action::ServerGoalHandle<AlignDecision>;
+  using AlignDecider = inha_interfaces::action::AlignDecider;
+  using GoalHandle = rclcpp_action::ServerGoalHandle<AlignDecider>;
 
-  rclcpp_action::Server<AlignDecision>::SharedPtr server_;
+  rclcpp_action::Server<AlignDecider>::SharedPtr server_;
 
   rclcpp_action::GoalResponse
   handleGoal(const rclcpp_action::GoalUUID &uuid,
-             std::shared_ptr<const AlignDecision::Goal> goal);
+             std::shared_ptr<const AlignDecider::Goal> goal);
   rclcpp_action::CancelResponse handleCancel(std::shared_ptr<GoalHandle> gh);
   void handleAccepted(std::shared_ptr<GoalHandle> gh);
   void execute(std::shared_ptr<GoalHandle> gh);

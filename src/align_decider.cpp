@@ -23,7 +23,7 @@ AlignDeciderNode::AlignDeciderNode()
   // 0/90 근처는 분모(sin)·기하가 무의미해지므로 안전 범위로 클램프.
   turn_angle_deg_ = std::clamp(turn_angle_deg_, 5.0f, 85.0f);
 
-  server_ = rclcpp_action::create_server<AlignDecision>(
+  server_ = rclcpp_action::create_server<AlignDecider>(
       this, "align_decision",
       std::bind(&AlignDeciderNode::handleGoal, this, std::placeholders::_1,
                 std::placeholders::_2),
@@ -37,7 +37,7 @@ AlignDeciderNode::AlignDeciderNode()
 
 rclcpp_action::GoalResponse AlignDeciderNode::handleGoal(
     const rclcpp_action::GoalUUID &,
-    std::shared_ptr<const AlignDecision::Goal> goal) {
+    std::shared_ptr<const AlignDecider::Goal> goal) {
   if (!goal || goal->coords.empty()) {
     RCLCPP_WARN(this->get_logger(), "Rejecting goal: empty coords");
     return rclcpp_action::GoalResponse::REJECT;
@@ -63,7 +63,7 @@ void AlignDeciderNode::handleAccepted(std::shared_ptr<GoalHandle> gh) {
 
 void AlignDeciderNode::execute(std::shared_ptr<GoalHandle> gh) {
   const auto goal = gh->get_goal();
-  auto result = std::make_shared<AlignDecision::Result>();
+  auto result = std::make_shared<AlignDecider::Result>();
 
   // goal coords 는 input_frame(map) 기준 → 계산 기준 target_frame(base_nav)로 변환.
   geometry_msgs::msg::TransformStamped tf;

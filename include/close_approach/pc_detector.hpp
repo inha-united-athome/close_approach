@@ -148,5 +148,5 @@ private:
                            Eigen::Vector2f &out_center);
   void publishOBB(const OBB &obb);
   void publishTargetEdge(const TargetEdge &edge);
-  void publishInvalid();
+  void publishInvalid(const char *reason = "unspecified");
 };

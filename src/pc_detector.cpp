@@ -345,7 +345,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
 
   pcl::fromROSMsg(*msg, *cloud_);
   if (cloud_->empty()) {
-    publishInvalid();
+    publishInvalid("empty input cloud");
     return;
   }
 
@@ -354,7 +354,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
 
   geometry_msgs::msg::TransformStamped tf;
   if (!getTransform(target_frame_, msg->header.frame_id, tf, msg->header.stamp)) {
-    publishInvalid();
+    publishInvalid("input TF unavailable");
     return;
   }
 
@@ -383,7 +383,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   applySelfFilter(cloud_, msg->header.stamp);
 
   if (cloud_->empty()) {
-    publishInvalid();
+    publishInvalid("empty after ROI/self_filter");
     return;
   }
 
@@ -413,7 +413,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
     }
     roi_filter_->cluster_points(cloud_, kdtree_, min_cluster_area_, anchor_ptr);
     if (cloud_->empty()) {
-      publishInvalid();
+      publishInvalid("empty after clustering");
       return;
     }
 
@@ -445,7 +445,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   float representative_y = 0.0F;
   if (!keepFrontFraction(cloud_, front_slice_ratio_, front_min_points_,
                          representative_x, representative_y)) {
-    publishInvalid();
+    publishInvalid("front slice unavailable");
     return;
   }
 
@@ -525,11 +525,12 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
         if (debug_log_) {
           RCLCPP_WARN_THROTTLE(
               this->get_logger(), *this->get_clock(), 500,
-              "Rejecting x increase: cached=%.3f candidate=%.3f count=%d/%d",
-              se2_cached_.x, candidate.x, consecutive_outliers_,
-              max_consecutive_outliers_);
+              "Rejecting x increase: cached=%.3f candidate=%.3f "
+              "delta=%.3f surface_x=%.3f count=%d/%d",
+              se2_cached_.x, candidate.x, delta, representative_x,
+              consecutive_outliers_, max_consecutive_outliers_);
         }
-        publishInvalid();
+        publishInvalid("x increase verification");
         return;
       }
     } else {
@@ -626,14 +627,14 @@ bool PCDetector::computeSurfaceYaw(
   return true;
 }
 
-void PCDetector::publishInvalid() {
+void PCDetector::publishInvalid(const char *reason) {
   ApproachError err;
   err.header.stamp = this->now();
   err.valid = false;
   pc_error_pub_->publish(err);
   if (debug_log_) {
     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                         "pc_error valid=0 (no usable longitudinal target)");
+                         "pc_error valid=0 reason=%s", reason);
   }
 }
 

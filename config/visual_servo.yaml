@@ -4,8 +4,8 @@ visual_servo:
     active_topic:  "/visual_servo/active"   # 매니저가 시작/정지 게이트로 사용
 
     # 두 타깃 클래스 (vision_msgs hypothesis.class_id 문자열)
-    class_id_a:    "0"
-    class_id_b:    "1"
+    class_id_a:    "cola"
+    class_id_b:    "fanta"
     require_both:  true     # 두 클래스 모두 잡혀야 중점 산출(false면 1개로도 동작)
 
     # 이미지 기하 (Detection2DArray는 이미지 크기를 싣지 않으므로 직접 지정)

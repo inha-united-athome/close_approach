@@ -51,7 +51,8 @@ find_package(inha_interfaces REQUIRED)
 # =========================
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ApproachError.msg"
-  DEPENDENCIES std_msgs
+  "action/AlignDecision.action"
+  DEPENDENCIES std_msgs geometry_msgs
 )
 
 # =========================
@@ -156,6 +157,10 @@ add_executable(approach_debug_logger_node
 
 add_executable(visual_servo_node
   src/visual_servo.cpp
+)
+
+add_executable(align_decider_node
+  src/align_decider.cpp
 )
 
 # ── 라이브 파라미터 튜닝 테스트 노드 ────────────────────────────────────────
@@ -282,6 +287,12 @@ target_include_directories(visual_servo_node
     $<INSTALL_INTERFACE:include>
 )
 
+target_include_directories(align_decider_node
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
 target_include_directories(self_filter_tuner_node
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -317,6 +328,7 @@ target_compile_features(approach_manager_node PUBLIC cxx_std_17)
 target_compile_features(approach_controller_node PUBLIC cxx_std_17)
 target_compile_features(approach_debug_logger_node PUBLIC cxx_std_17)
 target_compile_features(visual_servo_node PUBLIC cxx_std_17)
+target_compile_features(align_decider_node PUBLIC cxx_std_17)
 target_compile_features(self_filter_tuner_node PUBLIC cxx_std_17)
 target_compile_features(depth_edge_tuner_node PUBLIC cxx_std_17)
 
@@ -478,6 +490,15 @@ ament_target_dependencies(visual_servo_node
   std_msgs
   geometry_msgs
   vision_msgs
+)
+
+ament_target_dependencies(align_decider_node
+  rclcpp
+  rclcpp_action
+  geometry_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
 )
 
 ament_target_dependencies(self_filter_tuner_node
@@ -671,6 +692,10 @@ if(TARGET tf2_geometry_msgs::tf2_geometry_msgs)
   target_link_libraries(dead_reckoning_approach_node
     tf2_geometry_msgs::tf2_geometry_msgs
   )
+
+  target_link_libraries(align_decider_node
+    tf2_geometry_msgs::tf2_geometry_msgs
+  )
 else()
   target_link_libraries(approach_node
     ${tf2_geometry_msgs_LIBRARIES}
@@ -695,6 +720,10 @@ else()
   target_link_libraries(dead_reckoning_approach_node
     ${tf2_geometry_msgs_LIBRARIES}
   )
+
+  target_link_libraries(align_decider_node
+    ${tf2_geometry_msgs_LIBRARIES}
+  )
 endif()
 
 # =========================
@@ -705,7 +734,7 @@ rosidl_get_typesupport_target(cpp_typesupport_target
 
 foreach(_target pc_detector_node edge_detector_node depth_edge_detector_node
                 approach_manager_node approach_controller_node
-                approach_debug_logger_node)
+                approach_debug_logger_node align_decider_node)
   target_link_libraries(${_target} "${cpp_typesupport_target}")
 endforeach()
 
@@ -758,6 +787,7 @@ install(
     approach_controller_node
     approach_debug_logger_node
     visual_servo_node
+    align_decider_node
     self_filter_tuner_node
     depth_edge_tuner_node
   DESTINATION lib/${PROJECT_NAME}

@@ -20,7 +20,9 @@
   <depend>message_filters</depend>
   <depend>pcl_conversions</depend>
   <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
   <depend>rclpy</depend>
+  <depend>action_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>

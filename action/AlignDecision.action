@@ -1,0 +1,14 @@
+# Goal: 물체 좌표 배열 (base_nav 기준, x=전방 y=좌측). z는 미사용 가능(0).
+#       보통 2개(두 물체). 중점은 배열 전체의 평균으로 계산.
+#       LocalSearch.action 의 result coords 를 그대로 넘길 수 있다.
+geometry_msgs/Point[] coords
+---
+# Result
+bool success
+string direction          # "left" 또는 "right" (45도 트는 방향)
+float32 remain_distance   # 45도 대각선으로 주행할 거리(m) = |py|/sin(angle)
+float32 turn_angle_deg    # 회전각(부호: +좌 / -우)
+geometry_msgs/Point midpoint   # 계산한 두 물체 중점 (base_nav)
+---
+# Feedback
+float32 progress

@@ -70,6 +70,12 @@ public:
           pc_ = *msg;
           has_pc_ = true;
         });
+    pc_debug_sub_ = this->create_subscription<std_msgs::msg::String>(
+        "/approach/pc_debug", qos_rel,
+        [this](const std_msgs::msg::String::SharedPtr msg) {
+          std::lock_guard<std::mutex> lock(mutex_);
+          pc_status_ = msg->data;
+        });
     control_sub_ = this->create_subscription<ApproachError>(
         "/approach/control_error", qos_rel,
         [this](const ApproachError::SharedPtr msg) {
@@ -143,6 +149,15 @@ private:
     return ".jpg";
   }
 
+  static std::string csvToken(std::string value) {
+    for (char &ch : value) {
+      if (ch == ',' || ch == '\n' || ch == '\r') {
+        ch = ' ';
+      }
+    }
+    return value;
+  }
+
   void activeCallback(const std_msgs::msg::Bool::SharedPtr msg) {
     if (msg->data) {
       startSession();
@@ -165,6 +180,7 @@ private:
     has_cmd_ = false;
     has_image_ = false;
     has_cloud_ = false;
+    pc_status_ = "none";
     session_dir_ = std::filesystem::path(output_dir_) /
                    ("approach_" + timeForFilename());
     try {
@@ -187,7 +203,7 @@ private:
 
     csv_ << "sample,t_sec,state,"
             "edge_stamp,edge_valid,edge_theta_rad,edge_theta_deg,edge_mean_y_px,"
-            "pc_stamp,pc_valid,pc_x_error,pc_y_error,"
+            "pc_stamp,pc_valid,pc_x_error,pc_y_error,pc_status,"
             "control_stamp,control_valid,control_x_error,control_theta_rad,control_theta_deg,"
             "cmd_vx,cmd_wz,image_file,pcd_file\n";
     csv_.flush();
@@ -250,7 +266,8 @@ private:
          << (has_edge_ && edge_.valid) << ',' << edge_.theta_error << ','
          << deg(edge_.theta_error) << ',' << edge_.mean_y_px << ','
          << stampSec(pc_.header) << ',' << (has_pc_ && pc_.valid) << ','
-         << pc_.x_error << ',' << pc_.y_error << ','
+         << pc_.x_error << ',' << pc_.y_error << ',' << csvToken(pc_status_)
+         << ','
          << stampSec(control_.header) << ','
          << (has_control_ && control_.valid) << ',' << control_.x_error << ','
          << control_.theta_error << ',' << deg(control_.theta_error) << ','
@@ -270,6 +287,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr state_sub_;
   rclcpp::Subscription<ApproachError>::SharedPtr edge_sub_;
   rclcpp::Subscription<ApproachError>::SharedPtr pc_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr pc_debug_sub_;
   rclcpp::Subscription<ApproachError>::SharedPtr control_sub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
   rclcpp::Subscription<ImageMsg>::SharedPtr image_sub_;
@@ -291,6 +309,7 @@ private:
   std::uint64_t sample_index_ = 0;
 
   std::string state_ = "IDLE";
+  std::string pc_status_ = "none";
   ApproachError edge_;
   ApproachError pc_;
   ApproachError control_;

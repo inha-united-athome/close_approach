@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <sstream>
 
 #include <pcl/io/pcd_io.h>
 #include <pcl/ModelCoefficients.h>
@@ -267,6 +268,8 @@ PCDetector::PCDetector()
   filtered_cloud_pub_= this->create_publisher<CloudMsg>("/approach/filtered_cloud", qos_be_);
   debug_cloud_pub_   = this->create_publisher<CloudMsg>("/approach/debug_cloud", qos_be_);
   colored_cloud_pub_ = this->create_publisher<CloudMsg>("/approach/debug_cloud_colored", qos_be_);
+  pc_debug_pub_      = this->create_publisher<std_msgs::msg::String>(
+      "/approach/pc_debug", qos_rel_);
   obb_pub_           = this->create_publisher<visualization_msgs::msg::Marker>(
       "/approach/obb_marker", qos_rel_);
   edge_pub_          = this->create_publisher<visualization_msgs::msg::Marker>(
@@ -522,6 +525,11 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
         se2_cached_           = candidate;
         consecutive_outliers_ = 0;
       } else {
+        std::ostringstream status;
+        status << "x_increase_verification cached=" << se2_cached_.x
+               << " candidate=" << candidate.x << " delta=" << delta
+               << " surface_x=" << representative_x << " count="
+               << consecutive_outliers_ << "/" << max_consecutive_outliers_;
         if (debug_log_) {
           RCLCPP_WARN_THROTTLE(
               this->get_logger(), *this->get_clock(), 500,
@@ -530,7 +538,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
               se2_cached_.x, candidate.x, delta, representative_x,
               consecutive_outliers_, max_consecutive_outliers_);
         }
-        publishInvalid("x increase verification");
+        publishInvalid(status.str());
         return;
       }
     } else {
@@ -557,6 +565,14 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   err.yaw_valid       = yaw_ok;
   err.initial_dist_m  = initial_dist_;
   err.mean_y_px       = 0.0f;
+  {
+    std::ostringstream status;
+    status << "valid x=" << err.x_error << " surface_x=" << representative_x
+           << " yaw_valid=" << yaw_ok << " yaw_deg="
+           << surface_yaw * 180.0f / static_cast<float>(M_PI)
+           << " front_points=" << cloud_->size();
+    publishPcDebug(status.str());
+  }
   pc_error_pub_->publish(err);
 
   if (debug_log_) {
@@ -627,14 +643,24 @@ bool PCDetector::computeSurfaceYaw(
   return true;
 }
 
-void PCDetector::publishInvalid(const char *reason) {
+void PCDetector::publishPcDebug(const std::string &status) {
+  if (!pc_debug_pub_) {
+    return;
+  }
+  std_msgs::msg::String msg;
+  msg.data = status;
+  pc_debug_pub_->publish(msg);
+}
+
+void PCDetector::publishInvalid(const std::string &reason) {
   ApproachError err;
   err.header.stamp = this->now();
   err.valid = false;
+  publishPcDebug("invalid:" + reason);
   pc_error_pub_->publish(err);
   if (debug_log_) {
     RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                         "pc_error valid=0 reason=%s", reason);
+                         "pc_error valid=0 reason=%s", reason.c_str());
   }
 }
 

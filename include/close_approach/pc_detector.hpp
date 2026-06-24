@@ -22,6 +22,7 @@
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
@@ -54,6 +55,7 @@ private:
   rclcpp::Publisher<CloudMsg>::SharedPtr                   filtered_cloud_pub_;
   rclcpp::Publisher<CloudMsg>::SharedPtr                   debug_cloud_pub_;
   rclcpp::Publisher<CloudMsg>::SharedPtr                   colored_cloud_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr      pc_debug_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr obb_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr edge_pub_;
 
@@ -148,5 +150,6 @@ private:
                            Eigen::Vector2f &out_center);
   void publishOBB(const OBB &obb);
   void publishTargetEdge(const TargetEdge &edge);
-  void publishInvalid(const char *reason = "unspecified");
+  void publishPcDebug(const std::string &status);
+  void publishInvalid(const std::string &reason = "unspecified");
 };

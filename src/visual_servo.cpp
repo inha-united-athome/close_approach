@@ -161,7 +161,9 @@ void VisualServoNode::detectionCallback(
 
   std::lock_guard<std::mutex> lk(target_mutex_);
   target_.valid = valid;
-  target_.stamp = msg->header.stamp;
+  // staleness 기준은 노드 클럭 수신 시각으로 통일(메시지 stamp의 클럭 소스가
+  // now()와 달라 빼기에서 죽는 문제 방지).
+  target_.stamp = this->now();
   if (valid) {
     const float half_w = std::max(1.0f, center_x_);
     target_.err_norm = std::clamp((mid_x - center_x_) / half_w, -1.0f, 1.0f);
@@ -185,10 +187,13 @@ void VisualServoNode::controlTimerCallback() {
   float err = 0.0f;
   {
     std::lock_guard<std::mutex> lk(target_mutex_);
-    const double age = (this->now() - target_.stamp).seconds();
-    valid = enabled_.load(std::memory_order_acquire) && target_.valid &&
-            age <= static_cast<double>(detection_timeout_sec_);
-    err = target_.err_norm;
+    // target_.valid 일 때만 시간 차를 계산(기본 생성된 stamp는 클럭 소스가
+    // 달라 빼면 throw 하므로 첫 검출 전에는 접근하지 않는다).
+    if (enabled_.load(std::memory_order_acquire) && target_.valid) {
+      const double age = (this->now() - target_.stamp).seconds();
+      valid = age <= static_cast<double>(detection_timeout_sec_);
+      err = target_.err_norm;
+    }
   }
 
   float target_vx = 0.0f;

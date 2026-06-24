@@ -6,9 +6,9 @@ approach_manager:
 
     tol_x:              0.03   # m
     tol_theta:          0.08   # rad (~4.5°)
-    dwell_duration_sec: 1.0   # 정착 확인 시간 (멈추는 데 ~0.2s). 2.0→1.0; 깔끔하면 0.5까지 더 낮춤 가능
-    align_timeout_sec:  5.0
-    pc_timeout_sec:     3.0    # fresh PC x가 이 시간 없으면 종료 판정 (끊김 더 버티게 2.0→3.0)
+    dwell_duration_sec: 0.5   # 정착 확인 시간 (멈추는 데 ~0.2s). 2.0→1.0; 깔끔하면 0.5까지 더 낮춤 가능
+    align_timeout_sec:  2.0
+    pc_timeout_sec:     2.0    # fresh PC x가 이 시간 없으면 종료 판정 (끊김 더 버티게 2.0→3.0)
     x_hold_sec:         0.4    # 짧은 invalid 버스트는 직전 유효 x로 메워 끊김 방지 (< pc_timeout_sec)
     theta_timeout_sec:  0.5    # 신선한 yaw가 이 시간 없으면 θ명령=0 (stale 값으로 계속 회전 방지)
 

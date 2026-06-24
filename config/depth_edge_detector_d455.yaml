@@ -1,0 +1,38 @@
+depth_edge_detector:
+  ros__parameters:
+    img_topic: "/camera/camera_head/color/image_raw/compressed"
+
+    # launch의 depth_engine 인자로 실제 로봇에서 생성한 engine 경로가 주입됨
+    depth_engine: ""
+    depth_input_width: 518
+    depth_input_height: 518
+
+    # 가까움 점수는 ROI 안에서 0~1로 정규화된 상대값(미터 단위가 아님)
+    # 0.80에서 유효선이 없으면 step만큼 내려가며, 0.50 아래는 사용하지 않음
+    depth_threshold_start: 0.80
+    depth_threshold_min: 0.50
+    depth_threshold_step: 0.05
+    depth_weight_gamma: 2.0
+    min_candidate_lines: 1
+    # false: 0.50 아래(먼 영역)는 보지 않음. 근접 엣지가 없으면 엣지 yaw는
+    #        valid=false가 되고, 매니저가 PC 평면 normal yaw로 fallback한다.
+    #        (전체 이미지 폴백을 켜면 배경선 기반 엣지가 더 좋은 PC yaw를 가로챔)
+    depth_fallback_full: false
+
+    canny_low: 50
+    canny_high: 150
+    hough_thresh: 40
+    min_length: 60
+    max_gap: 15
+
+    roi_top_pct: 10
+    roi_bot_pct: 60
+    roi_left_pct: 20
+    roi_right_pct: 70
+
+    max_abs_yaw_deg: 30.0
+    enable_service_name: "/approach/edge_detector/set_enable"
+    # 실제 추론은 이 enable과 /approach/active가 모두 true일 때만 수행
+    start_enabled: false
+    debug_log: true
+    debug_image: true

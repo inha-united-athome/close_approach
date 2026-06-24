@@ -154,6 +154,10 @@ add_executable(approach_debug_logger_node
   src/approach_debug_logger.cpp
 )
 
+add_executable(visual_servo_node
+  src/visual_servo.cpp
+)
+
 # ── 라이브 파라미터 튜닝 테스트 노드 ────────────────────────────────────────
 add_executable(self_filter_tuner_node
   test/self_filter_tuner.cpp
@@ -272,6 +276,12 @@ target_include_directories(approach_debug_logger_node
     ${PCL_INCLUDE_DIRS}
 )
 
+target_include_directories(visual_servo_node
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
 target_include_directories(self_filter_tuner_node
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -306,6 +316,7 @@ target_compile_features(depth_edge_detector_node PUBLIC cxx_std_17)
 target_compile_features(approach_manager_node PUBLIC cxx_std_17)
 target_compile_features(approach_controller_node PUBLIC cxx_std_17)
 target_compile_features(approach_debug_logger_node PUBLIC cxx_std_17)
+target_compile_features(visual_servo_node PUBLIC cxx_std_17)
 target_compile_features(self_filter_tuner_node PUBLIC cxx_std_17)
 target_compile_features(depth_edge_tuner_node PUBLIC cxx_std_17)
 
@@ -460,6 +471,13 @@ ament_target_dependencies(approach_debug_logger_node
   geometry_msgs
   sensor_msgs
   pcl_conversions
+)
+
+ament_target_dependencies(visual_servo_node
+  rclcpp
+  std_msgs
+  geometry_msgs
+  vision_msgs
 )
 
 ament_target_dependencies(self_filter_tuner_node
@@ -739,6 +757,7 @@ install(
     approach_manager_node
     approach_controller_node
     approach_debug_logger_node
+    visual_servo_node
     self_filter_tuner_node
     depth_edge_tuner_node
   DESTINATION lib/${PROJECT_NAME}

@@ -1,0 +1,38 @@
+visual_servo:
+  ros__parameters:
+    bbox_topic:    "/detection/bbox_stream"
+    active_topic:  "/visual_servo/active"   # 매니저가 시작/정지 게이트로 사용
+
+    # 두 타깃 클래스 (vision_msgs hypothesis.class_id 문자열)
+    class_id_a:    "0"
+    class_id_b:    "1"
+    require_both:  true     # 두 클래스 모두 잡혀야 중점 산출(false면 1개로도 동작)
+
+    # 이미지 기하 (Detection2DArray는 이미지 크기를 싣지 않으므로 직접 지정)
+    image_width:   640.0
+    image_height:  480.0
+    image_center_x: -1.0    # <0 이면 width/2
+    image_center_y: -1.0    # <0 이면 height/2
+
+    # 횡오차(정규화 [-1,1]) → yaw PD. 오버슈팅 방지용 D 포함.
+    kp_yaw:     0.8
+    ki_yaw:     0.0
+    kd_yaw:     0.2
+    invert_yaw: true        # 이미지 +x(우측) → 우회전(angular.z<0)
+    tol_norm:   0.03        # 데드밴드
+
+    # 종방향(전진 전용). 정렬될수록 빠르게, |err|>=align_gate면 전진 0.
+    forward_speed: 0.10     # m/s
+    align_gate:    0.30
+    max_v:         0.20
+    max_w:         0.50
+
+    # 출력 슬루(가속도 제한)로 cmd_vel 부드럽게.
+    lin_accel_limit: 0.5    # m/s^2
+    lin_decel_limit: 1.0    # m/s^2 (정지는 더 빠르게)
+    ang_accel_limit: 2.0    # rad/s^2
+
+    detection_timeout_sec: 0.3   # 이만큼 검출 끊기면 정지로 램프
+    control_rate_hz:       20.0
+    start_enabled:         true
+    debug_log:             true

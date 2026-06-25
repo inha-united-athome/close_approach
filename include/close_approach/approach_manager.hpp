@@ -3,6 +3,7 @@
 #include "close_approach/msg/approach_error.hpp"
 
 #include <atomic>
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -61,6 +62,8 @@ private:
   // Cached sensor inputs
   ApproachError::SharedPtr latest_pc_error_;
   std::mutex               pc_mutex_;
+  std::uint64_t            pc_error_rx_count_ = 0;
+  std::uint64_t            pc_error_valid_count_ = 0;
   float                    last_good_x_err_   = 0.0f;  // last valid longitudinal x
   float                    last_theta_rad_    = 0.0f;
   bool                     theta_initialized_ = false;

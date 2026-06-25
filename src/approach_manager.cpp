@@ -58,8 +58,10 @@ ApproachManager::ApproachManager()
       "/approach/pc_error", qos_rel,
       [this](const ApproachError::SharedPtr msg) {
         std::lock_guard<std::mutex> lk(pc_mutex_);
+        ++pc_error_rx_count_;
         auto normalized = std::make_shared<ApproachError>(*msg);
         if (msg->valid) {
+          ++pc_error_valid_count_;
           normalized->x_error = goalRelativeXError(*msg);
           last_valid_pc_time_ = this->now();
           last_good_x_err_    = normalized->x_error;
@@ -67,6 +69,17 @@ ApproachManager::ApproachManager()
             initial_dist_ = std::abs(normalized->x_error);
             initial_dist_set_ = true;
           }
+        }
+        if (debug_log_) {
+          RCLCPP_INFO_THROTTLE(
+              this->get_logger(), *this->get_clock(), 300,
+              "pc_error rx count=%llu valid_count=%llu valid=%d raw_x=%.3f "
+              "surface=%.3f normalized_x=%.3f init_set=%d",
+              static_cast<unsigned long long>(pc_error_rx_count_),
+              static_cast<unsigned long long>(pc_error_valid_count_),
+              msg->valid,
+              msg->x_error, msg->surface_distance_m, normalized->x_error,
+              initial_dist_set_);
         }
         // Plane-normal yaw fallback (used only when edge yaw is stale).
         if (msg->yaw_valid) {
@@ -291,10 +304,14 @@ void ApproachManager::stateMachineCallback() {
   auto resolveTerminal = [&](const char *reason) {
     float terminal_x = 0.0F;
     bool terminal_x_initialized = false;
+    std::uint64_t terminal_pc_rx_count = 0;
+    std::uint64_t terminal_pc_valid_count = 0;
     {
       std::lock_guard<std::mutex> lk(pc_mutex_);
       terminal_x = last_good_x_err_;
       terminal_x_initialized = initial_dist_set_;
+      terminal_pc_rx_count = pc_error_rx_count_;
+      terminal_pc_valid_count = pc_error_valid_count_;
     }
     const bool x_ok = terminal_x_initialized &&
                       std::abs(terminal_x) < x_fail_dist_;
@@ -311,14 +328,18 @@ void ApproachManager::stateMachineCallback() {
         std::ostringstream ss;
         ss << reason << ", pose NOT acceptable (x=" << std::fixed
            << std::setprecision(3) << terminal_x << "m x_ok=" << x_ok
-           << ", yaw=" << yaw_deg << "deg yaw_ok=" << yaw_ok << ")";
+           << ", yaw=" << yaw_deg << "deg yaw_ok=" << yaw_ok
+           << ", pc_rx=" << terminal_pc_rx_count
+           << ", pc_valid_rx=" << terminal_pc_valid_count << ")";
         failure_message_ = ss.str();
       }
       action_failed_ = true;
       RCLCPP_ERROR(this->get_logger(),
                    "%s, pose NOT acceptable (x=%.3fm x_ok=%d, yaw=%.2fdeg "
-                   "yaw_ok=%d) → FAIL",
-                   reason, terminal_x, x_ok, yaw_deg, yaw_ok);
+                   "yaw_ok=%d, pc_rx=%llu valid_rx=%llu) → FAIL",
+                   reason, terminal_x, x_ok, yaw_deg, yaw_ok,
+                   static_cast<unsigned long long>(terminal_pc_rx_count),
+                   static_cast<unsigned long long>(terminal_pc_valid_count));
     }
   };
 
@@ -514,6 +535,8 @@ void ApproachManager::startApproach(float standoff) {
   {
     std::lock_guard<std::mutex> lk(pc_mutex_);
     latest_pc_error_.reset();
+    pc_error_rx_count_ = 0;
+    pc_error_valid_count_ = 0;
     last_good_x_err_ = 0.0f;
   }
 
@@ -543,6 +566,8 @@ void ApproachManager::stopApproach() {
   {
     std::lock_guard<std::mutex> lk(pc_mutex_);
     latest_pc_error_.reset();
+    pc_error_rx_count_ = 0;
+    pc_error_valid_count_ = 0;
     last_good_x_err_ = 0.0f;
     last_valid_pc_time_ = this->now();
   }

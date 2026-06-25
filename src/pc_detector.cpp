@@ -327,7 +327,6 @@ void PCDetector::lidarCallback(const CloudMsg::ConstSharedPtr &msg) {
   if (lidar_cloud->empty()) return;
 
   roi_filter_->voxel_downsampling(lidar_cloud);
-  roi_filter_->remove_outliers(lidar_cloud);
 
   geometry_msgs::msg::TransformStamped tf;
   try {
@@ -338,8 +337,10 @@ void PCDetector::lidarCallback(const CloudMsg::ConstSharedPtr &msg) {
                          "lidar TF failed: %s", ex.what());
     return;
   }
+  // Crop to ROI before SOR (see cloudCallback) to keep per-frame cost low.
   roi_filter_->remove_ground(lidar_cloud, tf.transform);
   applySpatialRoi(lidar_cloud);
+  roi_filter_->remove_outliers(lidar_cloud);
 
   std::lock_guard<std::mutex> lk(lidar_mutex_);
   lidar_cache_ = lidar_cloud;
@@ -359,7 +360,6 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   }
 
   roi_filter_->voxel_downsampling(cloud_);
-  roi_filter_->remove_outliers(cloud_);
 
   geometry_msgs::msg::TransformStamped tf;
   if (!getTransform(target_frame_, msg->header.frame_id, tf, msg->header.stamp)) {
@@ -367,10 +367,16 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
     return;
   }
 
+  // Transform to target_frame + drop ground, then crop to the ROI BEFORE the
+  // expensive statistical outlier removal. With a dense D455 cloud, running SOR
+  // on the full FOV (~70k pts) took seconds per frame on the Jetson, so the
+  // manager timed out before a single pc_error was produced (pc_rx=0). Cropping
+  // to the ROI first shrinks the cloud so SOR/self-filter run in a few ms.
   roi_filter_->remove_ground(cloud_, tf.transform);
   applySpatialRoiBounds(cloud_, roi_x_min_,
                         roi_x_max_, roi_y_abs_near_, roi_y_abs_max_,
                         roi_z_max_);
+  roi_filter_->remove_outliers(cloud_);
 
   // LiDAR fusion
   if (use_lidar_) {

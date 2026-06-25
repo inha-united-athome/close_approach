@@ -52,10 +52,11 @@ ApproachManager::ApproachManager()
   this->get_parameter("debug_log",          debug_log_);
 
   auto qos_rel = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
+  auto qos_pc = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
 
   // Subscribers
   pc_error_sub_ = this->create_subscription<ApproachError>(
-      "/approach/pc_error", qos_rel,
+      "/approach/pc_error", qos_pc,
       [this](const ApproachError::SharedPtr msg) {
         std::lock_guard<std::mutex> lk(pc_mutex_);
         ++pc_error_rx_count_;

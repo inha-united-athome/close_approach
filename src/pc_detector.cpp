@@ -708,11 +708,25 @@ void PCDetector::applySelfFilter(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
   };
   std::vector<Vol> vols;
   vols.reserve(self_filter_frames_.size());
+  std::size_t skipped_tf = 0;
   for (size_t i = 0; i < self_filter_frames_.size(); ++i) {
     geometry_msgs::msg::TransformStamped tf;
-    if (!getTransform(self_filter_frames_[i], target_frame_, tf, stamp)) {
-      // Missing TF for this link: skip just this volume rather than the frame.
-      continue;
+    try {
+      tf = tf_buffer_.lookupTransform(
+          self_filter_frames_[i], target_frame_, stamp,
+          rclcpp::Duration::from_seconds(0.0));
+    } catch (const tf2::TransformException &) {
+      try {
+        tf = tf_buffer_.lookupTransform(
+            self_filter_frames_[i], target_frame_, tf2::TimePointZero,
+            tf2::durationFromSec(0.0));
+      } catch (const tf2::TransformException &) {
+        // Missing TF for this link: skip just this volume rather than blocking
+        // the whole pointcloud callback. A slow callback causes manager PC
+        // timeout even while camera data is still arriving.
+        ++skipped_tf;
+        continue;
+      }
     }
     Eigen::Affine3f T = Eigen::Affine3f::Identity();
     const auto &t = tf.transform.translation;
@@ -734,6 +748,12 @@ void PCDetector::applySelfFilter(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
                                static_cast<float>(self_filter_off_y_[i]),
                                static_cast<float>(self_filter_off_z_[i]));
     vols.push_back(v);
+  }
+  if (skipped_tf > 0 && debug_log_) {
+    RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *this->get_clock(), 2000,
+        "self_filter: skipped %zu/%zu volume TFs", skipped_tf,
+        self_filter_frames_.size());
   }
   if (vols.empty()) return;
 

@@ -48,8 +48,11 @@ ApproachController::ApproachController() : Node("approach_controller") {
   error_sub_  = this->create_subscription<ApproachError>(
       "/approach/control_error", qos_rel,
       std::bind(&ApproachController::errorCallback, this, std::placeholders::_1));
+  // Latched to match the manager: receive current active state even if this
+  // subscription matches after the manager already published it.
+  auto active_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
   active_sub_ = this->create_subscription<std_msgs::msg::Bool>(
-      "/approach/active", qos_rel,
+      "/approach/active", active_qos,
       std::bind(&ApproachController::activeCallback, this, std::placeholders::_1));
   cmd_vel_pub_= this->create_publisher<geometry_msgs::msg::Twist>(
       "/cmd_vel", qos_rel);

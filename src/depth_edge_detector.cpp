@@ -132,8 +132,12 @@ public:
     img_sub_ = create_subscription<sensor_msgs::msg::CompressedImage>(
         img_topic_, qos_be,
         std::bind(&DepthEdgeDetector::imgCallback, this, std::placeholders::_1));
+    // Latched to match the manager: receive current active state even if this
+    // subscription matches after the manager already published it.
+    const auto active_qos =
+        rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
     active_sub_ = create_subscription<std_msgs::msg::Bool>(
-        "/approach/active", qos_rel,
+        "/approach/active", active_qos,
         std::bind(&DepthEdgeDetector::activeCallback, this,
                   std::placeholders::_1));
     error_pub_ = create_publisher<ApproachError>("/approach/edge_error", qos_rel);

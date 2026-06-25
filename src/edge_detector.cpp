@@ -44,8 +44,11 @@ EdgeDetector::EdgeDetector() : Node("edge_detector") {
   img_sub_  = this->create_subscription<sensor_msgs::msg::CompressedImage>(
       img_topic_, qos_be,
       std::bind(&EdgeDetector::imgCallback, this, std::placeholders::_1));
+  // Latched to match the manager: receive current active state even if this
+  // subscription matches after the manager already published it.
+  auto active_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
   active_sub_ = this->create_subscription<std_msgs::msg::Bool>(
-      "/approach/active", qos_rel,
+      "/approach/active", active_qos,
       std::bind(&EdgeDetector::activeCallback, this, std::placeholders::_1));
   error_pub_ = this->create_publisher<ApproachError>("/approach/edge_error", qos_rel);
   debug_img_pub_ = this->create_publisher<sensor_msgs::msg::CompressedImage>(

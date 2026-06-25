@@ -2,6 +2,8 @@
 
 #include <chrono>
 #include <cmath>
+#include <iomanip>
+#include <sstream>
 #include <thread>
 
 #include <tf2/utils.h>
@@ -56,10 +58,11 @@ ApproachManager::ApproachManager()
       "/approach/pc_error", qos_rel,
       [this](const ApproachError::SharedPtr msg) {
         std::lock_guard<std::mutex> lk(pc_mutex_);
-        latest_pc_error_ = msg;
+        auto normalized = std::make_shared<ApproachError>(*msg);
         if (msg->valid) {
+          normalized->x_error = goalRelativeXError(*msg);
           last_valid_pc_time_ = this->now();
-          last_good_x_err_    = msg->x_error;
+          last_good_x_err_    = normalized->x_error;
         }
         // Plane-normal yaw fallback (used only when edge yaw is stale).
         if (msg->yaw_valid) {
@@ -67,6 +70,7 @@ ApproachManager::ApproachManager()
           pc_yaw_valid_     = true;
           last_pc_yaw_time_ = this->now();
         }
+        latest_pc_error_ = normalized;
       });
 
   edge_error_sub_ = this->create_subscription<ApproachError>(
@@ -166,7 +170,8 @@ void ApproachManager::execute(std::shared_ptr<GoalHandle> gh) {
     }
     if (action_failed_) {
       result->success = false;
-      result->success_message = "Approach failed";
+      result->success_message =
+          failure_message_.empty() ? "Approach failed" : failure_message_;
       stopApproach();
       gh->abort(result);
       return;
@@ -217,7 +222,7 @@ void ApproachManager::stateMachineCallback() {
       x_err   = latest_pc_error_->x_error;
       x_valid = true;
       if (!initial_dist_set_) {
-        initial_dist_    = latest_pc_error_->x_error;
+        initial_dist_    = std::abs(latest_pc_error_->x_error);
         initial_dist_set_= true;
       }
     } else if (initial_dist_set_ &&
@@ -296,6 +301,13 @@ void ApproachManager::stateMachineCallback() {
                   reason, last_good_x_err_, yaw_deg);
     } else {
       action_failed_ = true;
+      {
+        std::ostringstream ss;
+        ss << reason << ", pose NOT acceptable (x=" << std::fixed
+           << std::setprecision(3) << last_good_x_err_ << "m x_ok=" << x_ok
+           << ", yaw=" << yaw_deg << "deg yaw_ok=" << yaw_ok << ")";
+        failure_message_ = ss.str();
+      }
       RCLCPP_ERROR(this->get_logger(),
                    "%s, pose NOT acceptable (x=%.3fm x_ok=%d, yaw=%.2fdeg "
                    "yaw_ok=%d) → FAIL",
@@ -480,6 +492,7 @@ void ApproachManager::startApproach(float standoff) {
   initial_dist_        = 0.0f;
   action_succeeded_    = false;
   action_failed_       = false;
+  failure_message_.clear();
   theta_initialized_   = false;
   last_theta_rad_      = 0.0f;
   last_theta_time_     = this->now();
@@ -565,6 +578,13 @@ void ApproachManager::setEdgeDetectorEnabled(bool enabled) {
   (void)future;
   RCLCPP_INFO(this->get_logger(), "Requested edge detector %s",
               enabled ? "enable" : "disable");
+}
+
+float ApproachManager::goalRelativeXError(const ApproachError &msg) const {
+  if (std::isfinite(msg.surface_distance_m) && msg.surface_distance_m > 0.0F) {
+    return msg.surface_distance_m - standoff_distance_;
+  }
+  return msg.x_error;
 }
 
 const char *ApproachManager::stateStr() const {

@@ -98,6 +98,7 @@ private:
   std::string  odom_frame_, target_frame_;
   std::string  edge_enable_service_name_;
   bool debug_log_ = true;
+  std::string failure_message_;
 
   // Trail
   std::deque<geometry_msgs::msg::PoseStamped> trail_;

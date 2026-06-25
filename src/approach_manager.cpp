@@ -2,6 +2,8 @@
 
 #include <chrono>
 #include <cmath>
+#include <iomanip>
+#include <sstream>
 #include <thread>
 
 #include <tf2/utils.h>
@@ -168,7 +170,8 @@ void ApproachManager::execute(std::shared_ptr<GoalHandle> gh) {
     }
     if (action_failed_) {
       result->success = false;
-      result->success_message = "Approach failed";
+      result->success_message =
+          failure_message_.empty() ? "Approach failed" : failure_message_;
       stopApproach();
       gh->abort(result);
       return;
@@ -298,6 +301,13 @@ void ApproachManager::stateMachineCallback() {
                   reason, last_good_x_err_, yaw_deg);
     } else {
       action_failed_ = true;
+      {
+        std::ostringstream ss;
+        ss << reason << ", pose NOT acceptable (x=" << std::fixed
+           << std::setprecision(3) << last_good_x_err_ << "m x_ok=" << x_ok
+           << ", yaw=" << yaw_deg << "deg yaw_ok=" << yaw_ok << ")";
+        failure_message_ = ss.str();
+      }
       RCLCPP_ERROR(this->get_logger(),
                    "%s, pose NOT acceptable (x=%.3fm x_ok=%d, yaw=%.2fdeg "
                    "yaw_ok=%d) → FAIL",
@@ -482,6 +492,7 @@ void ApproachManager::startApproach(float standoff) {
   initial_dist_        = 0.0f;
   action_succeeded_    = false;
   action_failed_       = false;
+  failure_message_.clear();
   theta_initialized_   = false;
   last_theta_rad_      = 0.0f;
   last_theta_time_     = this->now();

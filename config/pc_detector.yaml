@@ -22,6 +22,9 @@ pc_detector:
     max_cluster_size:    10000
     min_cluster_area:    0.09
 
+    # pc_detector는 surface_distance_m(raw x)을 발행하고, approach_manager가
+    # action goal_distance를 빼서 실제 x_error를 만든다. 이 값은 direct
+    # /approach/pc_error 소비자와 로그용 legacy/fallback x_error에만 사용된다.
     target_standoff_distance: 0.3
 
     # true: Euclidean 클러스터링으로 타깃 선택 후 전면 slice.
@@ -53,7 +56,7 @@ pc_detector:
     #  4 link_torso_4          5 link_torso_5
     #  6~11 link_right_arm_0~5  12~17 link_left_arm_0~5
     # ⚠ base는 collision 메쉬라 조인트 위치로 추정 → RViz로 검증·튜닝.
-    #   특히 base 박스 전방 길이가 표적(standoff ~0.3m) 점을 깎지 않는지 확인.
+    #   특히 base 박스 전방 길이가 표적(standoff) 점을 깎지 않는지 확인.
     self_filter:
       enabled: true
       padding: 0.03

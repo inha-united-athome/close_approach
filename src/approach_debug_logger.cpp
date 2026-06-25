@@ -203,7 +203,7 @@ private:
 
     csv_ << "sample,t_sec,state,"
             "edge_stamp,edge_valid,edge_theta_rad,edge_theta_deg,edge_mean_y_px,"
-            "pc_stamp,pc_valid,pc_x_error,pc_y_error,pc_status,"
+            "pc_stamp,pc_valid,pc_surface_x,pc_x_error,pc_y_error,pc_status,"
             "control_stamp,control_valid,control_x_error,control_theta_rad,control_theta_deg,"
             "cmd_vx,cmd_wz,image_file,pcd_file\n";
     csv_.flush();
@@ -266,8 +266,8 @@ private:
          << (has_edge_ && edge_.valid) << ',' << edge_.theta_error << ','
          << deg(edge_.theta_error) << ',' << edge_.mean_y_px << ','
          << stampSec(pc_.header) << ',' << (has_pc_ && pc_.valid) << ','
-         << pc_.x_error << ',' << pc_.y_error << ',' << csvToken(pc_status_)
-         << ','
+         << pc_.surface_distance_m << ',' << pc_.x_error << ','
+         << pc_.y_error << ',' << csvToken(pc_status_) << ','
          << stampSec(control_.header) << ','
          << (has_control_ && control_.valid) << ',' << control_.x_error << ','
          << control_.theta_error << ',' << deg(control_.theta_error) << ','

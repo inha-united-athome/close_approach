@@ -490,11 +490,12 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   }
 
   SE2Error candidate;
-  candidate.x = representative_x - target_standoff_distance_;
+  candidate.x = representative_x;
   candidate.y = 0.0F;
   candidate.degree_theta = 0.0F;
 
-  // X-only spike handling + EMA. The rejection is ASYMMETRIC by design:
+  // X-only spike handling + EMA over raw surface distance. The rejection is
+  // ASYMMETRIC by design:
   //  - A sudden DECREASE (something got closer) is accepted immediately. For
   //    collision safety the base must react to the nearest obstacle now; never
   //    hold a stale, farther value while moving forward.
@@ -506,7 +507,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
     se2_cached_      = candidate;
     se2_initialized_ = true;
     consecutive_outliers_ = 0;
-    initial_dist_ = std::abs(candidate.x);
+    initial_dist_ = std::abs(candidate.x - target_standoff_distance_);
   } else {
     const float delta = candidate.x - se2_cached_.x;  // >0 farther, <0 closer
     if (delta < -spike_dx_max_) {
@@ -559,7 +560,10 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   ApproachError err;
   err.header.stamp    = msg->header.stamp;
   err.valid           = true;
-  err.x_error         = se2_cached_.x;
+  err.surface_distance_m = se2_cached_.x;
+  // Legacy/fallback value for direct /approach/pc_error consumers. The manager
+  // recomputes x_error from surface_distance_m and the current action goal.
+  err.x_error         = se2_cached_.x - target_standoff_distance_;
   err.y_error         = 0.0f;
   err.theta_error     = yaw_ok ? surface_yaw : 0.0f;  // edge yaw stays primary
   err.yaw_valid       = yaw_ok;
@@ -567,7 +571,10 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   err.mean_y_px       = 0.0f;
   {
     std::ostringstream status;
-    status << "valid x=" << err.x_error << " surface_x=" << representative_x
+    status << "valid surface_x=" << err.surface_distance_m
+           << " raw_surface_x=" << representative_x
+           << " legacy_x=" << err.x_error
+           << " fallback_standoff=" << target_standoff_distance_
            << " yaw_valid=" << yaw_ok << " yaw_deg="
            << surface_yaw * 180.0f / static_cast<float>(M_PI)
            << " front_points=" << cloud_->size();
@@ -578,9 +585,10 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   if (debug_log_) {
     RCLCPP_INFO_THROTTLE(
         this->get_logger(), *this->get_clock(), 300,
-        "pc_error valid=1 x=%.4fm surface_x=%.4fm yaw_valid=%d yaw=%.2fdeg "
-        "init=%.4fm front=%zu(%.1f%%)",
-        err.x_error, representative_x, yaw_ok,
+        "pc_error valid=1 surface_x=%.4fm legacy_x=%.4fm "
+        "fallback_standoff=%.3fm yaw_valid=%d yaw=%.2fdeg init=%.4fm "
+        "front=%zu(%.1f%%)",
+        err.surface_distance_m, err.x_error, target_standoff_distance_, yaw_ok,
         surface_yaw * 180.0f / static_cast<float>(M_PI), err.initial_dist_m,
         cloud_->size(), front_slice_ratio_ * 100.0F);
   }

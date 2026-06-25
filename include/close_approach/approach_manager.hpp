@@ -114,5 +114,6 @@ private:
   void startApproach(float standoff);
   void stopApproach();
   void setEdgeDetectorEnabled(bool enabled);
+  float goalRelativeXError(const ApproachError &msg) const;
   const char *stateStr() const;
 };

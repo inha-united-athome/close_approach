@@ -56,10 +56,11 @@ ApproachManager::ApproachManager()
       "/approach/pc_error", qos_rel,
       [this](const ApproachError::SharedPtr msg) {
         std::lock_guard<std::mutex> lk(pc_mutex_);
-        latest_pc_error_ = msg;
+        auto normalized = std::make_shared<ApproachError>(*msg);
         if (msg->valid) {
+          normalized->x_error = goalRelativeXError(*msg);
           last_valid_pc_time_ = this->now();
-          last_good_x_err_    = msg->x_error;
+          last_good_x_err_    = normalized->x_error;
         }
         // Plane-normal yaw fallback (used only when edge yaw is stale).
         if (msg->yaw_valid) {
@@ -67,6 +68,7 @@ ApproachManager::ApproachManager()
           pc_yaw_valid_     = true;
           last_pc_yaw_time_ = this->now();
         }
+        latest_pc_error_ = normalized;
       });
 
   edge_error_sub_ = this->create_subscription<ApproachError>(
@@ -217,7 +219,7 @@ void ApproachManager::stateMachineCallback() {
       x_err   = latest_pc_error_->x_error;
       x_valid = true;
       if (!initial_dist_set_) {
-        initial_dist_    = latest_pc_error_->x_error;
+        initial_dist_    = std::abs(latest_pc_error_->x_error);
         initial_dist_set_= true;
       }
     } else if (initial_dist_set_ &&
@@ -565,6 +567,13 @@ void ApproachManager::setEdgeDetectorEnabled(bool enabled) {
   (void)future;
   RCLCPP_INFO(this->get_logger(), "Requested edge detector %s",
               enabled ? "enable" : "disable");
+}
+
+float ApproachManager::goalRelativeXError(const ApproachError &msg) const {
+  if (std::isfinite(msg.surface_distance_m) && msg.surface_distance_m > 0.0F) {
+    return msg.surface_distance_m - standoff_distance_;
+  }
+  return msg.x_error;
 }
 
 const char *ApproachManager::stateStr() const {

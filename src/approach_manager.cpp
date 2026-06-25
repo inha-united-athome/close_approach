@@ -63,6 +63,10 @@ ApproachManager::ApproachManager()
           normalized->x_error = goalRelativeXError(*msg);
           last_valid_pc_time_ = this->now();
           last_good_x_err_    = normalized->x_error;
+          if (!initial_dist_set_) {
+            initial_dist_ = std::abs(normalized->x_error);
+            initial_dist_set_ = true;
+          }
         }
         // Plane-normal yaw fallback (used only when edge yaw is stale).
         if (msg->yaw_valid) {
@@ -221,10 +225,6 @@ void ApproachManager::stateMachineCallback() {
         since_valid <= static_cast<double>(pc_timeout_sec_)) {
       x_err   = latest_pc_error_->x_error;
       x_valid = true;
-      if (!initial_dist_set_) {
-        initial_dist_    = std::abs(latest_pc_error_->x_error);
-        initial_dist_set_= true;
-      }
     } else if (initial_dist_set_ &&
                since_valid <= static_cast<double>(x_hold_sec_)) {
       // Bridge a brief invalid burst (a dropped frame or the short spike-verify
@@ -289,8 +289,15 @@ void ApproachManager::stateMachineCallback() {
   //   (2) x was lost while still far (|x| >= x_fail_dist).
   // Otherwise accept the pose as SUCCESS.
   auto resolveTerminal = [&](const char *reason) {
-    const bool x_ok = initial_dist_set_ &&
-                      std::abs(last_good_x_err_) < x_fail_dist_;
+    float terminal_x = 0.0F;
+    bool terminal_x_initialized = false;
+    {
+      std::lock_guard<std::mutex> lk(pc_mutex_);
+      terminal_x = last_good_x_err_;
+      terminal_x_initialized = initial_dist_set_;
+    }
+    const bool x_ok = terminal_x_initialized &&
+                      std::abs(terminal_x) < x_fail_dist_;
     const bool yaw_ok = !yaw_ever_measured_ ||
                         std::abs(last_known_theta_) < yaw_fail_rad_;
     const float yaw_deg = last_known_theta_ * 180.0f / static_cast<float>(M_PI);
@@ -298,20 +305,20 @@ void ApproachManager::stateMachineCallback() {
       action_succeeded_ = true;
       RCLCPP_WARN(this->get_logger(),
                   "%s but pose acceptable (x=%.3fm, yaw=%.2fdeg) → SUCCESS",
-                  reason, last_good_x_err_, yaw_deg);
+                  reason, terminal_x, yaw_deg);
     } else {
-      action_failed_ = true;
       {
         std::ostringstream ss;
         ss << reason << ", pose NOT acceptable (x=" << std::fixed
-           << std::setprecision(3) << last_good_x_err_ << "m x_ok=" << x_ok
+           << std::setprecision(3) << terminal_x << "m x_ok=" << x_ok
            << ", yaw=" << yaw_deg << "deg yaw_ok=" << yaw_ok << ")";
         failure_message_ = ss.str();
       }
+      action_failed_ = true;
       RCLCPP_ERROR(this->get_logger(),
                    "%s, pose NOT acceptable (x=%.3fm x_ok=%d, yaw=%.2fdeg "
                    "yaw_ok=%d) → FAIL",
-                   reason, last_good_x_err_, x_ok, yaw_deg, yaw_ok);
+                   reason, terminal_x, x_ok, yaw_deg, yaw_ok);
     }
   };
 

@@ -9,7 +9,7 @@ def generate_launch_description():
     pkg = FindPackageShare("close_approach")
     depth_engine = LaunchConfiguration("depth_engine")
 
-    cfg_pc = PathJoinSubstitution([pkg, "config", "pc_detector.yaml"])
+    cfg_pc = PathJoinSubstitution([pkg, "config", "pc_detector_d455.yaml"])
     cfg_edge = PathJoinSubstitution([pkg, "config", "depth_edge_detector_d455.yaml"])
     cfg_manager = PathJoinSubstitution([pkg, "config", "approach_manager.yaml"])
     cfg_ctrl = PathJoinSubstitution([pkg, "config", "approach_controller.yaml"])

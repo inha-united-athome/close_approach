@@ -259,8 +259,14 @@ PCDetector::PCDetector()
   cam_info_sub_= this->create_subscription<CamInfoMsg>(
       info_topic_, qos_be_,
       std::bind(&PCDetector::camInfoCallback, this, std::placeholders::_1));
+  // Must match the manager's latched (transient_local) /approach/active so the
+  // current active state is delivered even if this subscription matches after
+  // the manager already published it (discovery race behind the camera driver).
+  rclcpp::QoS active_qos(rclcpp::KeepLast(1));
+  active_qos.reliable();
+  active_qos.transient_local();
   active_sub_  = this->create_subscription<std_msgs::msg::Bool>(
-      "/approach/active", qos_rel_,
+      "/approach/active", active_qos,
       std::bind(&PCDetector::activeCallback, this, std::placeholders::_1));
 
   // Publishers

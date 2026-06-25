@@ -46,8 +46,11 @@ public:
     auto qos_rel = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
     auto qos_be = rclcpp::QoS(rclcpp::KeepLast(5)).best_effort();
 
+    // Latched to match the manager: receive current active state even if this
+    // subscription matches after the manager already published it.
+    auto active_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
     active_sub_ = this->create_subscription<std_msgs::msg::Bool>(
-        "/approach/active", qos_rel,
+        "/approach/active", active_qos,
         std::bind(&ApproachDebugLogger::activeCallback, this,
                   std::placeholders::_1));
     state_sub_ = this->create_subscription<std_msgs::msg::String>(

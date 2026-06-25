@@ -52,11 +52,10 @@ ApproachManager::ApproachManager()
   this->get_parameter("debug_log",          debug_log_);
 
   auto qos_rel = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
-  auto qos_pc = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
 
   // Subscribers
   pc_error_sub_ = this->create_subscription<ApproachError>(
-      "/approach/pc_error", qos_pc,
+      "/approach/pc_error", qos_rel,
       [this](const ApproachError::SharedPtr msg) {
         std::lock_guard<std::mutex> lk(pc_mutex_);
         ++pc_error_rx_count_;
@@ -113,8 +112,15 @@ ApproachManager::ApproachManager()
   control_error_pub_ = this->create_publisher<ApproachError>(
       "/approach/control_error", qos_rel);
 
+  // Latched: /approach/active is published once per state change. A late-joining
+  // subscriber (e.g. pc_detector whose discovery races behind the heavy camera
+  // driver) must still receive the current active state, otherwise it never
+  // starts processing clouds for the whole goal (manager then sees pc_rx=0).
+  rclcpp::QoS active_qos(rclcpp::KeepLast(1));
+  active_qos.reliable();
+  active_qos.transient_local();
   active_pub_ = this->create_publisher<std_msgs::msg::Bool>(
-      "/approach/active", qos_rel);
+      "/approach/active", active_qos);
 
   rclcpp::QoS trail_qos(rclcpp::KeepLast(1));
   trail_qos.reliable();

@@ -13,7 +13,7 @@ pc_detector:
     roi_y_abs_max: 0.8
     roi_z_max:    1.5
 
-    leaf_size:           0.03
+    leaf_size:           0.06
     mean_k:              50
     stddev_mul_thresh:   0.5
     ground_height:       0.1

@@ -1,0 +1,12 @@
+# Goal
+bool start
+---
+# Result
+bool    success
+string  message
+float32 theta_error          # rad,  yaw 오차 (depth_edge_detector, 평탄화 평균)
+float32 y_error              # m,    횡방향 오차 (base_nav y): RANSAC 평면 inlier 평균
+---
+# Feedback
+float32 progress
+string  state

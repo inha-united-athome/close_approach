@@ -47,6 +47,9 @@ private:
   float accel_limit_ = 0.05F;
   float decel_limit_ = 0.08F;
   float kp_distance_ = 0.8F;
+  float ki_distance_ = 0.05F;
+  float kd_distance_ = 0.20F;
+  float distance_integral_limit_ = 0.20F;
   float kp_lateral_ = 1.0F;
   float kp_yaw_ = 1.2F;
   float slow_down_distance_ = 0.08F;
@@ -57,6 +60,10 @@ private:
   float rotation_tolerance_rad_ = 0.02F;
   float min_rotation_w_ = 0.05F;
   float rotation_accel_limit_ = 0.4F;
+  float rotation_kp_yaw_ = 1.2F;
+  float rotation_ki_yaw_ = 0.0F;
+  float rotation_kd_yaw_ = 0.25F;
+  float rotation_integral_limit_ = 0.5F;
 
   bool log_enabled_ = true;
   std::filesystem::path log_dir_;

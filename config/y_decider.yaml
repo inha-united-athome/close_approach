@@ -1,0 +1,29 @@
+y_decider:
+  ros__parameters:
+    mask_topic: "/sam2/binary/image_raw/compressed"
+    cloud_topic: "/camera/camera_head/depth/color/points"
+    target_frame: "base_nav"
+
+    sync_tolerance_sec: 0.15
+    max_decision_age_sec: 0.5
+    decision_wait_timeout_sec: 1.0
+    mask_threshold: 127
+    min_mask_points: 100
+
+    roi_x_min: 0.05
+    roi_x_max: 3.0
+    roi_y_abs_max: 1.0
+    roi_z_min: 0.03
+    roi_z_max: 1.5
+
+    leaf_size: 0.03
+    mean_k: 30
+    stddev_mul_thresh: 1.0
+    cluster_tolerance: 0.05
+    min_cluster_size: 50
+    max_cluster_size: 20000
+    min_cluster_area: 0.01
+
+    l_shape_angle_step_deg: 1.0
+    l_shape_sigma: 0.03
+    debug_log: true

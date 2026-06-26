@@ -1,7 +1,8 @@
 y_decider:
   ros__parameters:
-    mask_topic: "/sam2/binary/image_raw/compressed"
+    mask_topic: "/sam2_segmentation_node/binary_mask/compressed"
     cloud_topic: "/camera/camera_head/depth/color/points"
+    camera_info_topic: "/camera/camera_head/color/camera_info"
     target_frame: "base_nav"
 
     sync_tolerance_sec: 0.15

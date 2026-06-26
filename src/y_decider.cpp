@@ -27,6 +27,7 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
+#include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <tf2/LinearMath/Matrix3x3.h>
@@ -40,6 +41,7 @@ namespace {
 constexpr float kPi = 3.14159265358979323846F;
 
 using CloudMsg = sensor_msgs::msg::PointCloud2;
+using CameraInfoMsg = sensor_msgs::msg::CameraInfo;
 using ImageMsg = sensor_msgs::msg::CompressedImage;
 
 struct Edge2D {
@@ -197,10 +199,16 @@ public:
                                    "/sam2/binary/image_raw/compressed");
     declare_parameter<std::string>("cloud_topic",
                                    "/camera/camera_head/depth/color/points");
+    declare_parameter<std::string>("camera_info_topic",
+                                   "/camera/camera_head/color/camera_info");
     declare_parameter<std::string>("target_frame", "base_nav");
     declare_parameter<double>("sync_tolerance_sec", 0.15);
     declare_parameter<double>("max_decision_age_sec", 0.5);
     declare_parameter<double>("decision_wait_timeout_sec", 1.0);
+    declare_parameter<float>("fx", 0.0F);
+    declare_parameter<float>("fy", 0.0F);
+    declare_parameter<float>("cx", 0.0F);
+    declare_parameter<float>("cy", 0.0F);
     declare_parameter<int>("mask_threshold", 127);
     declare_parameter<int>("min_mask_points", 100);
     declare_parameter<float>("roi_x_min", 0.05F);
@@ -221,10 +229,19 @@ public:
 
     get_parameter("mask_topic", mask_topic_);
     get_parameter("cloud_topic", cloud_topic_);
+    get_parameter("camera_info_topic", camera_info_topic_);
     get_parameter("target_frame", target_frame_);
     get_parameter("sync_tolerance_sec", sync_tolerance_sec_);
     get_parameter("max_decision_age_sec", max_decision_age_sec_);
     get_parameter("decision_wait_timeout_sec", decision_wait_timeout_sec_);
+    float param_fx = 0.0F;
+    float param_fy = 0.0F;
+    float param_cx = 0.0F;
+    float param_cy = 0.0F;
+    get_parameter("fx", param_fx);
+    get_parameter("fy", param_fy);
+    get_parameter("cx", param_cx);
+    get_parameter("cy", param_cy);
     get_parameter("mask_threshold", mask_threshold_);
     get_parameter("min_mask_points", min_mask_points_);
     get_parameter("roi_x_min", roi_x_min_);
@@ -262,6 +279,18 @@ public:
     mask_sub_ = create_subscription<ImageMsg>(
         mask_topic_, qos,
         std::bind(&YDeciderNode::maskCallback, this, std::placeholders::_1));
+    camera_info_sub_ = create_subscription<CameraInfoMsg>(
+        camera_info_topic_, qos,
+        std::bind(&YDeciderNode::cameraInfoCallback, this,
+                  std::placeholders::_1));
+
+    if (param_fx > 0.0F && param_fy > 0.0F) {
+      intrinsics_.valid = true;
+      intrinsics_.fx = param_fx;
+      intrinsics_.fy = param_fy;
+      intrinsics_.cx = param_cx;
+      intrinsics_.cy = param_cy;
+    }
 
     selected_cloud_pub_ =
         create_publisher<CloudMsg>("/y_decider/selected_cloud", qos);
@@ -276,9 +305,9 @@ public:
         std::bind(&YDeciderNode::handleAccepted, this, std::placeholders::_1));
 
     RCLCPP_INFO(get_logger(),
-                "YDecider ready mask=%s cloud=%s target=%s",
+                "YDecider ready mask=%s cloud=%s info=%s target=%s",
                 mask_topic_.c_str(), cloud_topic_.c_str(),
-                target_frame_.c_str());
+                camera_info_topic_.c_str(), target_frame_.c_str());
   }
 
 private:
@@ -290,6 +319,17 @@ private:
     float remain_distance = 0.0F;
     float turn_angle_deg = 0.0F;
     geometry_msgs::msg::Point midpoint;
+  };
+
+  struct CameraIntrinsics {
+    bool valid = false;
+    float fx = 0.0F;
+    float fy = 0.0F;
+    float cx = 0.0F;
+    float cy = 0.0F;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::string frame_id;
   };
 
   rclcpp_action::GoalResponse
@@ -373,6 +413,28 @@ private:
     }
   }
 
+  void cameraInfoCallback(const CameraInfoMsg::SharedPtr msg) {
+    if (!msg || msg->k[0] <= 0.0 || msg->k[4] <= 0.0) {
+      return;
+    }
+
+    CameraIntrinsics intrinsics;
+    intrinsics.valid = true;
+    intrinsics.fx = static_cast<float>(msg->k[0]);
+    intrinsics.fy = static_cast<float>(msg->k[4]);
+    intrinsics.cx = static_cast<float>(msg->k[2]);
+    intrinsics.cy = static_cast<float>(msg->k[5]);
+    intrinsics.width = msg->width;
+    intrinsics.height = msg->height;
+    intrinsics.frame_id = msg->header.frame_id;
+    {
+      std::lock_guard<std::mutex> lk(intrinsics_mutex_);
+      intrinsics_ = intrinsics;
+    }
+    RCLCPP_INFO_ONCE(get_logger(),
+                     "CameraInfo received for y_decider projection");
+  }
+
   void maskCallback(const ImageMsg::ConstSharedPtr msg) {
     CloudMsg::ConstSharedPtr cloud_msg;
     {
@@ -417,13 +479,30 @@ private:
       storeInvalid("Input pointcloud empty");
       return;
     }
-    if (source.width != static_cast<std::uint32_t>(mask.cols) ||
-        source.height != static_cast<std::uint32_t>(mask.rows)) {
-      std::ostringstream ss;
-      ss << "Mask/cloud size mismatch mask=" << mask.cols << "x" << mask.rows
-         << " cloud=" << source.width << "x" << source.height;
-      storeInvalid(ss.str());
-      return;
+
+    const std::size_t mask_points =
+        static_cast<std::size_t>(mask.cols) * static_cast<std::size_t>(mask.rows);
+    const bool index_aligned =
+        source.points.size() >= mask_points &&
+        ((source.width == static_cast<std::uint32_t>(mask.cols) &&
+          source.height == static_cast<std::uint32_t>(mask.rows)) ||
+         source.points.size() == mask_points);
+
+    CameraIntrinsics intrinsics;
+    if (!index_aligned) {
+      {
+        std::lock_guard<std::mutex> lk(intrinsics_mutex_);
+        intrinsics = intrinsics_;
+      }
+      if (!intrinsics.valid) {
+        std::ostringstream ss;
+        ss << "Mask/cloud size mismatch mask=" << mask.cols << "x" << mask.rows
+           << " cloud=" << source.width << "x" << source.height
+           << " and no CameraInfo for projection";
+        storeInvalid(ss.str());
+        return;
+      }
+      intrinsics = scaledIntrinsicsForMask(intrinsics, mask);
     }
 
     geometry_msgs::msg::TransformStamped tf;
@@ -436,7 +515,28 @@ private:
       return;
     }
 
-    auto masked_cloud = maskAndTransform(source, mask, tf);
+    geometry_msgs::msg::TransformStamped projection_tf;
+    bool use_projection_tf = false;
+    if (!index_aligned && !intrinsics.frame_id.empty() &&
+        intrinsics.frame_id != cloud_msg->header.frame_id) {
+      try {
+        projection_tf = tf_buffer_.lookupTransform(
+            intrinsics.frame_id, cloud_msg->header.frame_id,
+            rclcpp::Time(cloud_msg->header.stamp),
+            rclcpp::Duration::from_seconds(0.2));
+        use_projection_tf = true;
+      } catch (const tf2::TransformException &ex) {
+        storeInvalid(std::string("Projection TF failed: ") + ex.what());
+        return;
+      }
+    }
+
+    auto masked_cloud = index_aligned
+                            ? maskAndTransformByIndex(source, mask, tf)
+                            : maskAndTransformByProjection(source, mask, tf,
+                                                           intrinsics,
+                                                           projection_tf,
+                                                           use_projection_tf);
     if (static_cast<int>(masked_cloud->points.size()) < min_mask_points_) {
       storeInvalid("Too few masked points after ROI");
       return;
@@ -507,7 +607,36 @@ private:
     return mask;
   }
 
-  pcl::PointCloud<pcl::PointXYZ>::Ptr maskAndTransform(
+  CameraIntrinsics scaledIntrinsicsForMask(const CameraIntrinsics &intrinsics,
+                                           const cv::Mat &mask) const {
+    CameraIntrinsics scaled = intrinsics;
+    if (intrinsics.width > 0 && intrinsics.height > 0) {
+      const float sx = static_cast<float>(mask.cols) /
+                       static_cast<float>(intrinsics.width);
+      const float sy = static_cast<float>(mask.rows) /
+                       static_cast<float>(intrinsics.height);
+      scaled.fx *= sx;
+      scaled.cx *= sx;
+      scaled.fy *= sy;
+      scaled.cy *= sy;
+    }
+    return scaled;
+  }
+
+  static pcl::PointXYZ transformPoint(
+      const pcl::PointXYZ &p, const tf2::Matrix3x3 &r,
+      const geometry_msgs::msg::Vector3 &tr) {
+    pcl::PointXYZ out;
+    out.x = static_cast<float>(r[0][0] * p.x + r[0][1] * p.y +
+                               r[0][2] * p.z + tr.x);
+    out.y = static_cast<float>(r[1][0] * p.x + r[1][1] * p.y +
+                               r[1][2] * p.z + tr.y);
+    out.z = static_cast<float>(r[2][0] * p.x + r[2][1] * p.y +
+                               r[2][2] * p.z + tr.z);
+    return out;
+  }
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr maskAndTransformByIndex(
       const pcl::PointCloud<pcl::PointXYZ> &source, const cv::Mat &mask,
       const geometry_msgs::msg::TransformStamped &tf) const {
     auto out = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
@@ -523,25 +652,81 @@ private:
       for (int u = 0; u < mask.cols; ++u) {
         if (row[u] == 0) continue;
         const auto &p = source.points[static_cast<std::size_t>(v) *
-                                      source.width +
+                                      static_cast<std::size_t>(mask.cols) +
                                       static_cast<std::size_t>(u)];
         if (!std::isfinite(p.x) || !std::isfinite(p.y) ||
             !std::isfinite(p.z)) {
           continue;
         }
 
-        pcl::PointXYZ base;
-        base.x = static_cast<float>(r[0][0] * p.x + r[0][1] * p.y +
-                                    r[0][2] * p.z + tr.x);
-        base.y = static_cast<float>(r[1][0] * p.x + r[1][1] * p.y +
-                                    r[1][2] * p.z + tr.y);
-        base.z = static_cast<float>(r[2][0] * p.x + r[2][1] * p.y +
-                                    r[2][2] * p.z + tr.z);
+        const pcl::PointXYZ base = transformPoint(p, r, tr);
         if (base.x < roi_x_min_ || base.x > roi_x_max_) continue;
         if (std::abs(base.y) > roi_y_abs_max_) continue;
         if (base.z < roi_z_min_ || base.z > roi_z_max_) continue;
         out->points.push_back(base);
       }
+    }
+
+    out->width = static_cast<std::uint32_t>(out->points.size());
+    out->height = 1;
+    out->is_dense = false;
+    return out;
+  }
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr maskAndTransformByProjection(
+      const pcl::PointCloud<pcl::PointXYZ> &source, const cv::Mat &mask,
+      const geometry_msgs::msg::TransformStamped &tf,
+      const CameraIntrinsics &intrinsics,
+      const geometry_msgs::msg::TransformStamped &projection_tf,
+      bool use_projection_tf) const {
+    auto out = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+    out->points.reserve(source.points.size() / 4);
+
+    const auto &tr = tf.transform.translation;
+    const auto &qr = tf.transform.rotation;
+    tf2::Quaternion q(qr.x, qr.y, qr.z, qr.w);
+    tf2::Matrix3x3 r(q);
+
+    geometry_msgs::msg::Vector3 projection_tr;
+    tf2::Matrix3x3 projection_r;
+    projection_r.setIdentity();
+    if (use_projection_tf) {
+      projection_tr = projection_tf.transform.translation;
+      const auto &projection_qr = projection_tf.transform.rotation;
+      tf2::Quaternion projection_q(projection_qr.x, projection_qr.y,
+                                   projection_qr.z, projection_qr.w);
+      projection_r = tf2::Matrix3x3(projection_q);
+    }
+
+    for (const auto &p : source.points) {
+      if (!std::isfinite(p.x) || !std::isfinite(p.y) ||
+          !std::isfinite(p.z)) {
+        continue;
+      }
+
+      const pcl::PointXYZ camera =
+          use_projection_tf ? transformPoint(p, projection_r, projection_tr) : p;
+      if (!std::isfinite(camera.x) || !std::isfinite(camera.y) ||
+          !std::isfinite(camera.z) || camera.z <= 0.0F) {
+        continue;
+      }
+
+      const float u_f = intrinsics.fx * camera.x / camera.z + intrinsics.cx;
+      const float v_f = intrinsics.fy * camera.y / camera.z + intrinsics.cy;
+      const int u = static_cast<int>(std::lround(u_f));
+      const int v = static_cast<int>(std::lround(v_f));
+      if (u < 0 || u >= mask.cols || v < 0 || v >= mask.rows) {
+        continue;
+      }
+      if (mask.ptr<std::uint8_t>(v)[u] == 0) {
+        continue;
+      }
+
+      const pcl::PointXYZ base = transformPoint(p, r, tr);
+      if (base.x < roi_x_min_ || base.x > roi_x_max_) continue;
+      if (std::abs(base.y) > roi_y_abs_max_) continue;
+      if (base.z < roi_z_min_ || base.z > roi_z_max_) continue;
+      out->points.push_back(base);
     }
 
     out->width = static_cast<std::uint32_t>(out->points.size());
@@ -714,6 +899,7 @@ private:
 
   std::string mask_topic_;
   std::string cloud_topic_;
+  std::string camera_info_topic_;
   std::string target_frame_;
   double sync_tolerance_sec_ = 0.15;
   double max_decision_age_sec_ = 0.5;
@@ -738,6 +924,7 @@ private:
 
   rclcpp::Subscription<ImageMsg>::SharedPtr mask_sub_;
   rclcpp::Subscription<CloudMsg>::SharedPtr cloud_sub_;
+  rclcpp::Subscription<CameraInfoMsg>::SharedPtr camera_info_sub_;
   rclcpp::Publisher<CloudMsg>::SharedPtr selected_cloud_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr edge_marker_pub_;
   rclcpp_action::Server<YDecider>::SharedPtr server_;
@@ -747,6 +934,8 @@ private:
 
   mutable std::mutex cloud_mutex_;
   std::deque<CloudMsg::ConstSharedPtr> cloud_cache_;
+  std::mutex intrinsics_mutex_;
+  CameraIntrinsics intrinsics_;
   std::mutex decision_mutex_;
   Decision latest_decision_;
 };

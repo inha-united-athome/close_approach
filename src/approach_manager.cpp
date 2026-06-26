@@ -1,5 +1,6 @@
 #include "close_approach/approach_manager.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <iomanip>
@@ -21,6 +22,9 @@ ApproachManager::ApproachManager()
   this->declare_parameter<float>("pc_timeout_sec",     2.0F);
   this->declare_parameter<float>("x_hold_sec",         0.2F);
   this->declare_parameter<float>("theta_timeout_sec",  1.0F);
+  this->declare_parameter<float>("yaw_jitter_success_sec", 2.0F);
+  this->declare_parameter<float>("yaw_jitter_min_range_deg", 10.0F);
+  this->declare_parameter<int>("yaw_jitter_min_sign_flips", 1);
   this->declare_parameter<float>("yaw_fail_deg",       10.0F);
   this->declare_parameter<float>("x_fail_dist",        0.10F);
   this->declare_parameter<float>("x_converged_hold_sec", 0.5F);
@@ -39,6 +43,15 @@ ApproachManager::ApproachManager()
   this->get_parameter("pc_timeout_sec",     pc_timeout_sec_);
   this->get_parameter("x_hold_sec",         x_hold_sec_);
   this->get_parameter("theta_timeout_sec",  theta_timeout_sec_);
+  this->get_parameter("yaw_jitter_success_sec", yaw_jitter_success_sec_);
+  float yaw_jitter_min_range_deg = 10.0F;
+  this->get_parameter("yaw_jitter_min_range_deg", yaw_jitter_min_range_deg);
+  yaw_jitter_min_range_rad_ =
+      std::max(0.0F, yaw_jitter_min_range_deg) *
+      static_cast<float>(M_PI) / 180.0F;
+  this->get_parameter("yaw_jitter_min_sign_flips",
+                      yaw_jitter_min_sign_flips_);
+  yaw_jitter_min_sign_flips_ = std::max(0, yaw_jitter_min_sign_flips_);
   float yaw_fail_deg = 10.0F;
   this->get_parameter("yaw_fail_deg", yaw_fail_deg);
   yaw_fail_rad_ = yaw_fail_deg * static_cast<float>(M_PI) / 180.0F;
@@ -287,6 +300,9 @@ void ApproachManager::stateMachineCallback() {
         theta_err * 180.0f / static_cast<float>(M_PI),
         edge_fresh ? "edge" : (pc_yaw_fresh ? "pc_plane" : "none"));
   }
+  const bool x_ready = x_valid && std::abs(x_err) < tol_x_;
+  const bool yaw_jitter_success =
+      updateYawJitterWatchdog(now, x_ready, theta_fresh, theta_err);
 
   // Build control_error to send to controller
   ApproachError ctrl;
@@ -361,7 +377,7 @@ void ApproachManager::stateMachineCallback() {
         resolveTerminal("PC timeout in APPROACH");
         break;
       }
-      if (!x_valid || std::abs(x_err) >= tol_x_) {
+      if (!x_ready) {
         x_convergence_pending_ = false;
         break;
       }
@@ -399,6 +415,23 @@ void ApproachManager::stateMachineCallback() {
       ctrl.x_error = 0.0f;   // theta-only control
       ctrl.valid   = true;
       control_error_pub_->publish(ctrl);
+
+      if (yaw_jitter_success) {
+        ctrl.valid = false;
+        ctrl.x_error = 0.0f;
+        ctrl.theta_error = 0.0f;
+        control_error_pub_->publish(ctrl);
+        state_ = State::DONE;
+        action_succeeded_ = true;
+        RCLCPP_WARN(this->get_logger(),
+                    "ALIGN_THETA yaw jitter persisted %.2fs "
+                    "(range=%.2fdeg flips=%d, x=%.3f) → SUCCESS",
+                    yaw_jitter_success_sec_,
+                    (yaw_jitter_max_theta_ - yaw_jitter_min_theta_) *
+                        180.0f / static_cast<float>(M_PI),
+                    yaw_jitter_sign_flips_, x_err);
+        break;
+      }
 
       if (x_valid && std::abs(x_err) >= tol_x_) {
         x_convergence_pending_ = false;
@@ -440,11 +473,23 @@ void ApproachManager::stateMachineCallback() {
         dwell_start_ = now;
         break;
       }
-      if (std::abs(x_err) >= tol_x_) {
+      if (!x_ready) {
         RCLCPP_WARN(this->get_logger(), "DWELL → APPROACH (x drift %.3f)",
                     x_err);
         state_ = State::APPROACH;
         x_convergence_pending_ = false;
+        break;
+      }
+      if (yaw_jitter_success) {
+        state_ = State::DONE;
+        action_succeeded_ = true;
+        RCLCPP_WARN(this->get_logger(),
+                    "DWELL yaw jitter persisted %.2fs "
+                    "(range=%.2fdeg flips=%d, x=%.3f) → SUCCESS",
+                    yaw_jitter_success_sec_,
+                    (yaw_jitter_max_theta_ - yaw_jitter_min_theta_) *
+                        180.0f / static_cast<float>(M_PI),
+                    yaw_jitter_sign_flips_, x_err);
         break;
       }
       if (std::abs(theta_err) >= tol_theta_) {
@@ -517,6 +562,54 @@ void ApproachManager::publishTrail() {
   RCLCPP_INFO(this->get_logger(), "Trail published: %zu poses", path.poses.size());
 }
 
+void ApproachManager::resetYawJitterWatchdog() {
+  yaw_jitter_tracking_ = false;
+  yaw_jitter_min_theta_ = 0.0F;
+  yaw_jitter_max_theta_ = 0.0F;
+  yaw_jitter_last_sign_ = 0;
+  yaw_jitter_sign_flips_ = 0;
+}
+
+bool ApproachManager::updateYawJitterWatchdog(const rclcpp::Time &now,
+                                              bool x_ready, bool theta_fresh,
+                                              float theta_err) {
+  if (yaw_jitter_success_sec_ <= 0.0F || !x_ready || !theta_fresh) {
+    resetYawJitterWatchdog();
+    return false;
+  }
+
+  // Count only meaningful sign changes; tiny near-zero noise is covered by the
+  // range threshold below.
+  const float flip_deadband = tol_theta_ * 0.5F;
+  const int sign = (std::abs(theta_err) >= flip_deadband)
+                       ? (theta_err > 0.0F ? 1 : -1)
+                       : 0;
+  if (!yaw_jitter_tracking_) {
+    yaw_jitter_tracking_ = true;
+    yaw_jitter_since_ = now;
+    yaw_jitter_min_theta_ = theta_err;
+    yaw_jitter_max_theta_ = theta_err;
+    yaw_jitter_last_sign_ = sign;
+    yaw_jitter_sign_flips_ = 0;
+    return false;
+  }
+
+  yaw_jitter_min_theta_ = std::min(yaw_jitter_min_theta_, theta_err);
+  yaw_jitter_max_theta_ = std::max(yaw_jitter_max_theta_, theta_err);
+  if (sign != 0) {
+    if (yaw_jitter_last_sign_ != 0 && sign != yaw_jitter_last_sign_) {
+      ++yaw_jitter_sign_flips_;
+    }
+    yaw_jitter_last_sign_ = sign;
+  }
+
+  const double elapsed = (now - yaw_jitter_since_).seconds();
+  const float theta_range = yaw_jitter_max_theta_ - yaw_jitter_min_theta_;
+  return elapsed >= static_cast<double>(yaw_jitter_success_sec_) &&
+         theta_range >= yaw_jitter_min_range_rad_ &&
+         yaw_jitter_sign_flips_ >= yaw_jitter_min_sign_flips_;
+}
+
 // ─── Start / Stop ────────────────────────────────────────────────────────────
 
 void ApproachManager::startApproach(float standoff) {
@@ -537,6 +630,7 @@ void ApproachManager::startApproach(float standoff) {
   last_known_theta_    = 0.0f;
   yaw_ever_measured_   = false;
   x_convergence_pending_ = false;
+  resetYawJitterWatchdog();
   last_valid_pc_time_  = this->now();
 
   {
@@ -589,6 +683,7 @@ void ApproachManager::stopApproach() {
   initial_dist_set_ = false;
   initial_dist_ = 0.0F;
   x_convergence_pending_ = false;
+  resetYawJitterWatchdog();
   post_align_done_ = false;
 
   std_msgs::msg::Bool active_msg;

@@ -11,6 +11,9 @@ approach_manager:
     pc_timeout_sec:     2.0    # fresh PC x가 이 시간 없으면 종료 판정 (끊김 더 버티게 2.0→3.0)
     x_hold_sec:         0.4    # 짧은 invalid 버스트는 직전 유효 x로 메워 끊김 방지 (< pc_timeout_sec)
     theta_timeout_sec:  0.5    # 신선한 yaw가 이 시간 없으면 θ명령=0 (stale 값으로 계속 회전 방지)
+    yaw_jitter_success_sec: 2.0 # x 도착 후 yaw가 이 시간 동안 흔들리면 곡면/불안정 yaw로 보고 성공 종료
+    yaw_jitter_min_range_deg: 10.0
+    yaw_jitter_min_sign_flips: 1
 
     # 대회용 종료 정책: 포기 시점(PC/align timeout)에 아래 둘만 fail, 그 외엔 성공.
     yaw_fail_deg:       20.0   # 마지막 yaw가 이 이상 틀어져 있으면 fail

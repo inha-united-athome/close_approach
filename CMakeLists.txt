@@ -51,7 +51,6 @@ find_package(inha_interfaces REQUIRED)
 # =========================
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ApproachError.msg"
-  "action/AlignDecision.action"
   DEPENDENCIES std_msgs geometry_msgs
 )
 
@@ -165,6 +164,10 @@ add_executable(align_decider_node
 
 add_executable(y_decider_node
   src/y_decider.cpp
+)
+
+add_executable(y_nav_goal_decider_node
+  src/y_nav_goal_decider.cpp
 )
 
 # ── 라이브 파라미터 튜닝 테스트 노드 ────────────────────────────────────────
@@ -305,6 +308,12 @@ target_include_directories(y_decider_node
     ${OpenCV_INCLUDE_DIRS}
 )
 
+target_include_directories(y_nav_goal_decider_node
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
 target_include_directories(self_filter_tuner_node
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -342,6 +351,7 @@ target_compile_features(approach_debug_logger_node PUBLIC cxx_std_17)
 target_compile_features(visual_servo_node PUBLIC cxx_std_17)
 target_compile_features(align_decider_node PUBLIC cxx_std_17)
 target_compile_features(y_decider_node PUBLIC cxx_std_17)
+target_compile_features(y_nav_goal_decider_node PUBLIC cxx_std_17)
 target_compile_features(self_filter_tuner_node PUBLIC cxx_std_17)
 target_compile_features(depth_edge_tuner_node PUBLIC cxx_std_17)
 
@@ -512,6 +522,7 @@ ament_target_dependencies(align_decider_node
   tf2
   tf2_ros
   tf2_geometry_msgs
+  inha_interfaces
 )
 
 ament_target_dependencies(y_decider_node
@@ -519,8 +530,20 @@ ament_target_dependencies(y_decider_node
   rclcpp_action
   geometry_msgs
   sensor_msgs
+  std_srvs
   visualization_msgs
   pcl_conversions
+  tf2
+  tf2_ros
+  inha_interfaces
+)
+
+ament_target_dependencies(y_nav_goal_decider_node
+  rclcpp
+  rclcpp_action
+  geometry_msgs
+  nav_msgs
+  std_srvs
   tf2
   tf2_ros
   inha_interfaces
@@ -764,7 +787,7 @@ rosidl_get_typesupport_target(cpp_typesupport_target
 
 foreach(_target pc_detector_node edge_detector_node depth_edge_detector_node
                 approach_manager_node approach_controller_node
-                approach_debug_logger_node align_decider_node)
+                approach_debug_logger_node)
   target_link_libraries(${_target} "${cpp_typesupport_target}")
 endforeach()
 
@@ -824,6 +847,7 @@ install(
     visual_servo_node
     align_decider_node
     y_decider_node
+    y_nav_goal_decider_node
     self_filter_tuner_node
     depth_edge_tuner_node
   DESTINATION lib/${PROJECT_NAME}

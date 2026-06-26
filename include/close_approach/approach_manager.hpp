@@ -80,6 +80,12 @@ private:
   rclcpp::Time align_start_;
   rclcpp::Time x_converged_since_;
   bool         x_convergence_pending_ = false;
+  rclcpp::Time yaw_jitter_since_;
+  bool         yaw_jitter_tracking_ = false;
+  float        yaw_jitter_min_theta_ = 0.0f;
+  float        yaw_jitter_max_theta_ = 0.0f;
+  int          yaw_jitter_last_sign_ = 0;
+  int          yaw_jitter_sign_flips_ = 0;
   bool         post_align_done_    = false;
   float        initial_dist_       = 0.0f;
   bool         initial_dist_set_   = false;
@@ -93,6 +99,9 @@ private:
   float pc_timeout_sec_;
   float x_hold_sec_;       // bridge brief invalid PC bursts with last good x
   float theta_timeout_sec_;  // no fresh yaw for this long -> stop rotating
+  float yaw_jitter_success_sec_;
+  float yaw_jitter_min_range_rad_;
+  int yaw_jitter_min_sign_flips_;
   // Terminal acceptance: on give-up (PC/align timeout) succeed if the pose is
   // good enough, fail only if x was lost while far OR yaw is badly off.
   float yaw_fail_rad_;     // |yaw| >= this at give-up -> FAIL
@@ -118,6 +127,9 @@ private:
   void startApproach(float standoff);
   void stopApproach();
   void setEdgeDetectorEnabled(bool enabled);
+  void resetYawJitterWatchdog();
+  bool updateYawJitterWatchdog(const rclcpp::Time &now, bool x_ready,
+                               bool theta_fresh, float theta_err);
   float goalRelativeXError(const ApproachError &msg) const;
   const char *stateStr() const;
 };

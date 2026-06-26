@@ -3,7 +3,9 @@
 #include <memory>
 #include <string>
 
+
 #include "inha_interfaces/action/align_decider.hpp"
+
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
@@ -26,6 +28,7 @@ public:
 private:
   using AlignDecider = inha_interfaces::action::AlignDecider;
   using GoalHandle = rclcpp_action::ServerGoalHandle<AlignDecider>;
+
 
   rclcpp_action::Server<AlignDecider>::SharedPtr server_;
 

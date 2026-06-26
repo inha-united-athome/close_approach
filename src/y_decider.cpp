@@ -1,6 +1,7 @@
 #include "inha_interfaces/action/y_decider.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -30,6 +31,8 @@
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <geometry_msgs/msg/point_stamped.hpp>
+#include <std_srvs/srv/set_bool.hpp>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_ros/buffer.h>
@@ -43,6 +46,7 @@ constexpr float kPi = 3.14159265358979323846F;
 using CloudMsg = sensor_msgs::msg::PointCloud2;
 using CameraInfoMsg = sensor_msgs::msg::CameraInfo;
 using ImageMsg = sensor_msgs::msg::CompressedImage;
+using PointStampedMsg = geometry_msgs::msg::PointStamped;
 
 struct Edge2D {
   Eigen::Vector2f center{0.0F, 0.0F};
@@ -201,7 +205,11 @@ public:
                                    "/camera/camera_head/depth/color/points");
     declare_parameter<std::string>("camera_info_topic",
                                    "/camera/camera_head/color/camera_info");
+    declare_parameter<std::string>("enable_service_name",
+                                   "/y_decider/set_enable");
+    declare_parameter<std::string>("midpoint_topic", "/y_decider/midpoint");
     declare_parameter<std::string>("target_frame", "base_nav");
+    declare_parameter<bool>("enabled_on_start", false);
     declare_parameter<double>("sync_tolerance_sec", 0.15);
     declare_parameter<double>("max_decision_age_sec", 0.5);
     declare_parameter<double>("decision_wait_timeout_sec", 1.0);
@@ -230,7 +238,11 @@ public:
     get_parameter("mask_topic", mask_topic_);
     get_parameter("cloud_topic", cloud_topic_);
     get_parameter("camera_info_topic", camera_info_topic_);
+    get_parameter("enable_service_name", enable_service_name_);
+    get_parameter("midpoint_topic", midpoint_topic_);
     get_parameter("target_frame", target_frame_);
+    bool enabled_on_start = false;
+    get_parameter("enabled_on_start", enabled_on_start);
     get_parameter("sync_tolerance_sec", sync_tolerance_sec_);
     get_parameter("max_decision_age_sec", max_decision_age_sec_);
     get_parameter("decision_wait_timeout_sec", decision_wait_timeout_sec_);
@@ -273,6 +285,8 @@ public:
     min_cluster_area_ = std::max(0.0F, min_cluster_area_);
 
     const auto qos = rclcpp::SensorDataQoS();
+    enabled_.store(enabled_on_start, std::memory_order_release);
+
     cloud_sub_ = create_subscription<CloudMsg>(
         cloud_topic_, qos,
         std::bind(&YDeciderNode::cloudCallback, this, std::placeholders::_1));
@@ -294,8 +308,25 @@ public:
 
     selected_cloud_pub_ =
         create_publisher<CloudMsg>("/y_decider/selected_cloud", qos);
+    midpoint_pub_ = create_publisher<PointStampedMsg>(midpoint_topic_, qos);
     edge_marker_pub_ = create_publisher<visualization_msgs::msg::Marker>(
         "/y_decider/closest_edge_marker", rclcpp::QoS(1).reliable());
+    enable_srv_ = create_service<std_srvs::srv::SetBool>(
+        enable_service_name_,
+        [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
+               std::shared_ptr<std_srvs::srv::SetBool::Response> resp) {
+          enabled_.store(req->data, std::memory_order_release);
+          {
+            std::lock_guard<std::mutex> lk(decision_mutex_);
+            latest_decision_.valid = false;
+            latest_decision_.message.clear();
+            latest_decision_.stamp = now();
+          }
+          resp->success = true;
+          resp->message = req->data ? "y_decider enabled"
+                                    : "y_decider disabled";
+          RCLCPP_INFO(get_logger(), "%s", resp->message.c_str());
+        });
 
     server_ = rclcpp_action::create_server<YDecider>(
         this, "y_decision",
@@ -305,9 +336,10 @@ public:
         std::bind(&YDeciderNode::handleAccepted, this, std::placeholders::_1));
 
     RCLCPP_INFO(get_logger(),
-                "YDecider ready mask=%s cloud=%s info=%s target=%s",
+                "YDecider ready mask=%s cloud=%s info=%s enable=%s target=%s",
                 mask_topic_.c_str(), cloud_topic_.c_str(),
-                camera_info_topic_.c_str(), target_frame_.c_str());
+                camera_info_topic_.c_str(), enable_service_name_.c_str(),
+                target_frame_.c_str());
   }
 
 private:
@@ -436,6 +468,10 @@ private:
   }
 
   void maskCallback(const ImageMsg::ConstSharedPtr msg) {
+    if (!enabled_.load(std::memory_order_acquire)) {
+      return;
+    }
+
     CloudMsg::ConstSharedPtr cloud_msg;
     {
       std::lock_guard<std::mutex> lk(cloud_mutex_);
@@ -582,6 +618,7 @@ private:
     }
 
     publishSelectedCloud(cluster, cloud_msg->header.stamp);
+    publishMidpoint(decision, cloud_msg->header.stamp);
     publishEdgeMarker(edge, cloud_msg->header.stamp);
 
     if (debug_log_) {
@@ -846,6 +883,15 @@ private:
     selected_cloud_pub_->publish(out);
   }
 
+  void publishMidpoint(const Decision &decision,
+                       const builtin_interfaces::msg::Time &stamp) {
+    PointStampedMsg out;
+    out.header.stamp = stamp;
+    out.header.frame_id = target_frame_;
+    out.point = decision.midpoint;
+    midpoint_pub_->publish(out);
+  }
+
   void publishEdgeMarker(const Edge2D &edge,
                          const builtin_interfaces::msg::Time &stamp) {
     if (edge_marker_pub_->get_subscription_count() == 0) return;
@@ -900,6 +946,8 @@ private:
   std::string mask_topic_;
   std::string cloud_topic_;
   std::string camera_info_topic_;
+  std::string enable_service_name_;
+  std::string midpoint_topic_;
   std::string target_frame_;
   double sync_tolerance_sec_ = 0.15;
   double max_decision_age_sec_ = 0.5;
@@ -926,7 +974,9 @@ private:
   rclcpp::Subscription<CloudMsg>::SharedPtr cloud_sub_;
   rclcpp::Subscription<CameraInfoMsg>::SharedPtr camera_info_sub_;
   rclcpp::Publisher<CloudMsg>::SharedPtr selected_cloud_pub_;
+  rclcpp::Publisher<PointStampedMsg>::SharedPtr midpoint_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr edge_marker_pub_;
+  rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr enable_srv_;
   rclcpp_action::Server<YDecider>::SharedPtr server_;
 
   tf2_ros::Buffer tf_buffer_;
@@ -938,6 +988,7 @@ private:
   CameraIntrinsics intrinsics_;
   std::mutex decision_mutex_;
   Decision latest_decision_;
+  std::atomic<bool> enabled_{false};
 };
 
 int main(int argc, char **argv) {

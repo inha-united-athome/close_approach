@@ -73,6 +73,9 @@ DeadReckoningApproachNode::DeadReckoningApproachNode()
   this->declare_parameter<float>("accel_limit", 0.05F);
   this->declare_parameter<float>("decel_limit", 0.08F);
   this->declare_parameter<float>("kp_distance", 0.8F);
+  this->declare_parameter<float>("ki_distance", 0.05F);
+  this->declare_parameter<float>("kd_distance", 0.20F);
+  this->declare_parameter<float>("distance_integral_limit", 0.20F);
   this->declare_parameter<float>("kp_lateral", 1.0F);
   this->declare_parameter<float>("kp_yaw", 1.2F);
   this->declare_parameter<float>("slow_down_distance", 0.08F);
@@ -83,6 +86,10 @@ DeadReckoningApproachNode::DeadReckoningApproachNode()
   this->declare_parameter<float>("rotation_tolerance_rad", 0.02F);
   this->declare_parameter<float>("min_rotation_w", 0.05F);
   this->declare_parameter<float>("rotation_accel_limit", 0.4F);
+  this->declare_parameter<float>("rotation_kp_yaw", 1.2F);
+  this->declare_parameter<float>("rotation_ki_yaw", 0.0F);
+  this->declare_parameter<float>("rotation_kd_yaw", 0.25F);
+  this->declare_parameter<float>("rotation_integral_limit", 0.5F);
   this->declare_parameter<bool>("log_enabled", true);
   this->declare_parameter<std::string>(
       "log_dir", "/home/thor/inha_logs/module/close_approach/dead_reckoning");
@@ -101,6 +108,9 @@ DeadReckoningApproachNode::DeadReckoningApproachNode()
   this->get_parameter("accel_limit", accel_limit_);
   this->get_parameter("decel_limit", decel_limit_);
   this->get_parameter("kp_distance", kp_distance_);
+  this->get_parameter("ki_distance", ki_distance_);
+  this->get_parameter("kd_distance", kd_distance_);
+  this->get_parameter("distance_integral_limit", distance_integral_limit_);
   this->get_parameter("kp_lateral", kp_lateral_);
   this->get_parameter("kp_yaw", kp_yaw_);
   this->get_parameter("slow_down_distance", slow_down_distance_);
@@ -111,6 +121,10 @@ DeadReckoningApproachNode::DeadReckoningApproachNode()
   this->get_parameter("rotation_tolerance_rad", rotation_tolerance_rad_);
   this->get_parameter("min_rotation_w", min_rotation_w_);
   this->get_parameter("rotation_accel_limit", rotation_accel_limit_);
+  this->get_parameter("rotation_kp_yaw", rotation_kp_yaw_);
+  this->get_parameter("rotation_ki_yaw", rotation_ki_yaw_);
+  this->get_parameter("rotation_kd_yaw", rotation_kd_yaw_);
+  this->get_parameter("rotation_integral_limit", rotation_integral_limit_);
   this->get_parameter("log_enabled", log_enabled_);
   std::string log_dir;
   this->get_parameter("log_dir", log_dir);
@@ -125,6 +139,16 @@ DeadReckoningApproachNode::DeadReckoningApproachNode()
   min_rotation_w_ = std::clamp(std::abs(min_rotation_w_), 0.001F,
                                std::abs(max_w_));
   rotation_accel_limit_ = std::max(std::abs(rotation_accel_limit_), 0.01F);
+  rotation_kp_yaw_ = std::max(rotation_kp_yaw_, 0.0F);
+  rotation_ki_yaw_ = std::max(rotation_ki_yaw_, 0.0F);
+  rotation_kd_yaw_ = std::max(rotation_kd_yaw_, 0.0F);
+  rotation_integral_limit_ = std::max(std::abs(rotation_integral_limit_),
+                                      0.0F);
+  kp_distance_ = std::max(kp_distance_, 0.0F);
+  ki_distance_ = std::max(ki_distance_, 0.0F);
+  kd_distance_ = std::max(kd_distance_, 0.0F);
+  distance_integral_limit_ = std::max(std::abs(distance_integral_limit_),
+                                      0.0F);
 
   if (log_enabled_) {
     std::error_code error;
@@ -366,11 +390,14 @@ void DeadReckoningApproachNode::execute_rotate(
       static_cast<double>(timeout_margin_sec_);
   double accumulated_yaw = 0.0;
   double w_cmd = 0.0;
+  double rotation_error_integral = 0.0;
+  double previous_remaining = requested_yaw;
 
   RCLCPP_INFO(this->get_logger(),
               "Dead reckoning rotate started: target=%+.4frad (%.1fdeg) "
-              "timeout=%.2fs",
-              requested_yaw, requested_yaw * 180.0 / kPi, timeout_sec);
+              "timeout=%.2fs pid=(%.2f, %.2f, %.2f)",
+              requested_yaw, requested_yaw * 180.0 / kPi, timeout_sec,
+              rotation_kp_yaw_, rotation_ki_yaw_, rotation_kd_yaw_);
 
   rclcpp::Rate loop_rate(control_rate_hz_);
   while (rclcpp::ok()) {
@@ -420,10 +447,26 @@ void DeadReckoningApproachNode::execute_rotate(
       return;
     }
 
-    double target_w = std::clamp(
-        static_cast<double>(kp_yaw_) * remaining,
-        -static_cast<double>(std::abs(max_w_)),
-        static_cast<double>(std::abs(max_w_)));
+    const double safe_dt = std::max(dt, 1e-3);
+    rotation_error_integral += remaining * safe_dt;
+    if (rotation_integral_limit_ > 0.0F) {
+      rotation_error_integral = std::clamp(
+          rotation_error_integral,
+          -static_cast<double>(rotation_integral_limit_),
+          static_cast<double>(rotation_integral_limit_));
+    } else {
+      rotation_error_integral = 0.0;
+    }
+    const double rotation_error_derivative =
+        (remaining - previous_remaining) / safe_dt;
+    previous_remaining = remaining;
+
+    double target_w =
+        static_cast<double>(rotation_kp_yaw_) * remaining +
+        static_cast<double>(rotation_ki_yaw_) * rotation_error_integral +
+        static_cast<double>(rotation_kd_yaw_) * rotation_error_derivative;
+    target_w = std::clamp(target_w, -static_cast<double>(std::abs(max_w_)),
+                          static_cast<double>(std::abs(max_w_)));
     if (std::abs(target_w) < min_rotation_w_) {
       target_w = std::copysign(static_cast<double>(min_rotation_w_),
                                remaining);
@@ -503,12 +546,15 @@ void DeadReckoningApproachNode::execute(
       target_abs_distance / std::max(static_cast<double>(min_v_), 1e-3);
   const double timeout_sec = expected_duration + timeout_margin_sec_;
   double v_cmd = 0.0;
+  double distance_error_integral = 0.0;
+  double previous_remaining = target_abs_distance;
 
   RCLCPP_INFO(this->get_logger(),
               "Dead reckoning approach started: distance=%.3fm direction=%s "
-              "start=(%.3f, %.3f, %.3f) timeout=%.2fs",
+              "start=(%.3f, %.3f, %.3f) timeout=%.2fs pid=(%.2f, %.2f, %.2f)",
               target_abs_distance, direction > 0.0 ? "forward" : "backward",
-              start_x, start_y, start_yaw, timeout_sec);
+              start_x, start_y, start_yaw, timeout_sec, kp_distance_,
+              ki_distance_, kd_distance_);
 
   rclcpp::Rate loop_rate(control_rate_hz_);
   while (rclcpp::ok()) {
@@ -563,7 +609,27 @@ void DeadReckoningApproachNode::execute(
       return;
     }
 
-    double target_speed = kp_distance_ * std::max(remaining, 0.0);
+    const double safe_dt = std::max(dt, 1e-3);
+    const double distance_error = std::max(remaining, 0.0);
+    distance_error_integral += distance_error * safe_dt;
+    if (distance_integral_limit_ > 0.0F) {
+      distance_error_integral = std::clamp(
+          distance_error_integral,
+          -static_cast<double>(distance_integral_limit_),
+          static_cast<double>(distance_integral_limit_));
+    } else {
+      distance_error_integral = 0.0;
+    }
+    const double distance_error_derivative =
+        (remaining - previous_remaining) / safe_dt;
+    previous_remaining = remaining;
+
+    double target_speed =
+        static_cast<double>(kp_distance_) * distance_error +
+        static_cast<double>(ki_distance_) * distance_error_integral +
+        static_cast<double>(kd_distance_) * distance_error_derivative;
+    target_speed = std::clamp(target_speed, 0.0,
+                              static_cast<double>(std::abs(max_v_)));
     if (slow_down_distance_ > 1e-6F) {
       target_speed = std::min(
           target_speed,
@@ -571,7 +637,8 @@ void DeadReckoningApproachNode::execute(
               std::clamp(remaining / static_cast<double>(slow_down_distance_),
                          0.0, 1.0));
     }
-    if (remaining > goal_tolerance_) {
+    if (remaining > 2.0 * static_cast<double>(goal_tolerance_) &&
+        target_speed > 1e-6) {
       target_speed = std::clamp(target_speed, static_cast<double>(min_v_),
                                 static_cast<double>(max_v_));
     }

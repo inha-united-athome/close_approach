@@ -3,7 +3,10 @@ y_decider:
     mask_topic: "/sam2_segmentation_node/binary_mask/compressed"
     cloud_topic: "/camera/camera_head/depth/color/points"
     camera_info_topic: "/camera/camera_head/color/camera_info"
+    enable_service_name: "/y_decider/set_enable"
+    midpoint_topic: "/y_decider/midpoint"
     target_frame: "base_nav"
+    enabled_on_start: false
 
     sync_tolerance_sec: 0.15
     max_decision_age_sec: 0.5

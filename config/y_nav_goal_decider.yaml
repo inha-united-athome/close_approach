@@ -1,0 +1,26 @@
+y_nav_goal_decider:
+  ros__parameters:
+    action_name: "y_nav_goal_decision"
+    y_decider_enable_service_name: "/y_decider/set_enable"
+    y_decider_midpoint_topic: "/y_decider/midpoint"
+    costmap_topic: "/local_costmap/costmap"
+    base_frame: "base_nav"
+    output_frame: "map"
+
+    y_decider_enable_timeout_sec: 1.0
+    midpoint_timeout_sec: 2.0
+    costmap_timeout_sec: 1.0
+    tf_timeout_sec: 0.2
+
+    min_target_distance: 0.20
+    min_goal_forward_distance: 0.03
+    preferred_standoff_distance: 0.55
+    standoff_candidates: [0.35, 0.45, 0.55, 0.65, 0.75]
+    lateral_candidates: [0.0, -0.10, 0.10, -0.20, 0.20]
+
+    footprint_length: 0.70
+    footprint_width: 0.65
+    footprint_padding: 0.05
+    lethal_cost_threshold: 65
+    unknown_is_blocked: true
+    debug_log: true

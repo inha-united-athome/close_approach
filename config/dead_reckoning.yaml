@@ -20,11 +20,18 @@ dead_reckoning_approach_node:
     rotation_tolerance_rad: 0.02
     min_rotation_w:         0.05
     rotation_accel_limit:   0.40
+    rotation_kp_yaw:        1.20
+    rotation_ki_yaw:        0.00
+    rotation_kd_yaw:        0.25
+    rotation_integral_limit: 0.50
 
     accel_limit:  0.20       # m/s², 가속 (0→max_v 약 1.0초)
     decel_limit:  0.80       # m/s², 감속
 
-    kp_distance:  1.0       # 잔여 거리 → 목표 속도 비례 게인
+    kp_distance:  1.5        # 잔여 거리 → 목표 속도 PID P
+    ki_distance:  0.05       # 정지마찰/항상 덜 가는 편향 보정용. 크게 잡지 말 것
+    kd_distance:  0.20       # 접근 속도 제동
+    distance_integral_limit: 0.20
     kp_lateral:   1.0        # 횡방향 오차 → 회전 보정 게인
     kp_yaw:       1.2        # yaw 오차 → 회전 보정 게인
 

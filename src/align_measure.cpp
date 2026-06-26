@@ -3,12 +3,12 @@
 // 액션을 받으면
 //   1) /approach/active 를 올리고 depth_edge_detector 를 SetEnable 서비스로 켜고,
 //   2) /approach/edge_error 의 theta_error 를 짧게 누적해 평탄화(yaw),
+<<<<<<< HEAD
 //   3) 최신 포인트클라우드를 base 프레임으로 변환한 뒤 RANSAC 평면 inlier의
 //      평균 y 로 y_error 를 측정,
+=======
+	//   3) 세그멘테이션 마스크 + 포인트클라우드로 테이블 점을 bas
 //   4) edge_detector 와 /approach/active 를 끄고 결과로 반환.
-//
-// BT 가 이 결과를 blackboard 에 올려 rotate / forward / rotate / approach 로 소비.
-
 #include "inha_interfaces/action/align_measure.hpp"
 #include "close_approach/msg/approach_error.hpp"
 #include "inha_interfaces/srv/set_enable.hpp"
@@ -19,12 +19,17 @@
 #include <cmath>
 #include <cstdint>
 #include <deque>
+<<<<<<< HEAD
 #include <functional>
 #include <future>
+=======
+#include <limits>
+>>>>>>> a25352d (0626)
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+<<<<<<< HEAD
 #include <vector>
 
 #include <pcl/ModelCoefficients.h>
@@ -32,10 +37,23 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/segmentation/sac_segmentation.h>
+=======
+#include <utility>
+#include <vector>
+
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
+>>>>>>> a25352d (0626)
 #include <pcl_conversions/pcl_conversions.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
+<<<<<<< HEAD
+=======
+#include <sensor_msgs/msg/camera_info.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <tf2/LinearMath/Matrix3x3.h>
@@ -50,6 +68,7 @@ using ApproachError = close_approach::msg::ApproachError;
 using SetEnable = inha_interfaces::srv::SetEnable;
 using CloudMsg = sensor_msgs::msg::PointCloud2;
 
+
 }  // namespace
 
 class AlignMeasureNode : public rclcpp::Node {
@@ -63,6 +82,7 @@ public:
     declare_parameter<std::string>("action_name", "align_measure");
     declare_parameter<std::string>("cloud_topic",
                                    "/camera/camera_head/depth/color/points");
+
     declare_parameter<std::string>("edge_enable_service_name",
                                    "/approach/edge_detector/set_enable");
     declare_parameter<std::string>("edge_error_topic", "/approach/edge_error");
@@ -76,12 +96,14 @@ public:
     declare_parameter<int>("ransac_min_inliers", 200);
     declare_parameter<int>("ransac_max_iterations", 100);
     declare_parameter<double>("ransac_distance_threshold", 0.02);
+
     declare_parameter<double>("theta_trim_band_rad", 0.10);
 
     declare_parameter<bool>("debug_log", true);
 
     get_parameter("action_name", action_name_);
     get_parameter("cloud_topic", cloud_topic_);
+
     get_parameter("edge_enable_service_name", edge_enable_service_name_);
     get_parameter("edge_error_topic", edge_error_topic_);
     get_parameter("target_frame", target_frame_);
@@ -92,6 +114,7 @@ public:
     get_parameter("ransac_min_inliers", ransac_min_inliers_);
     get_parameter("ransac_max_iterations", ransac_max_iterations_);
     get_parameter("ransac_distance_threshold", ransac_distance_threshold_);
+
     get_parameter("theta_trim_band_rad", theta_trim_band_rad_);
     get_parameter("debug_log", debug_log_);
 
@@ -101,11 +124,13 @@ public:
     ransac_max_iterations_ = std::max(1, ransac_max_iterations_);
     ransac_distance_threshold_ = std::max(0.001, ransac_distance_threshold_);
 
+
     const auto qos = rclcpp::SensorDataQoS();
     cloud_sub_ = create_subscription<CloudMsg>(
         cloud_topic_, qos,
         std::bind(&AlignMeasureNode::cloudCallback, this,
                   std::placeholders::_1));
+
     edge_error_sub_ = create_subscription<ApproachError>(
         edge_error_topic_, rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
         std::bind(&AlignMeasureNode::edgeErrorCallback, this,
@@ -131,6 +156,7 @@ public:
                 "AlignMeasure ready action=%s cloud=%s edge_error=%s "
                 "enable=%s target=%s",
                 action_name_.c_str(), cloud_topic_.c_str(),
+
                 edge_error_topic_.c_str(), edge_enable_service_name_.c_str(),
                 target_frame_.c_str());
   }
@@ -146,6 +172,7 @@ private:
     float b = 0.0F;
     float c = 0.0F;
     float d = 0.0F;
+
   };
 
   static std::chrono::nanoseconds secondsToNanoseconds(double seconds) {
@@ -193,6 +220,7 @@ private:
       std::lock_guard<std::mutex> lk(theta_mutex_);
       theta_samples_.clear();
     }
+
     feedback->progress = 0.1F;
     feedback->state = "enabling_edge_detector";
     gh->publish_feedback(feedback);
@@ -222,6 +250,7 @@ private:
     const rclcpp::Time deadline =
         start + rclcpp::Duration::from_seconds(measure_duration_sec_);
 
+
     while (rclcpp::ok() && (deadline - now()).seconds() > 0.0) {
       if (gh->is_canceling()) {
         cleanup();
@@ -230,12 +259,13 @@ private:
         gh->canceled(result);
         return;
       }
+
       std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 
     cleanup();
 
-    // ---- y_error: RANSAC 평면 inlier 평균 ----
+
     feedback->progress = 0.85F;
     feedback->state = "computing";
     gh->publish_feedback(feedback);
@@ -244,10 +274,10 @@ private:
     if (!cloud_msg) {
       result->success = false;
       result->message = "No pointcloud received";
+
       gh->abort(result);
       return;
     }
-
     const PlaneMeasure plane = measurePlaneY(cloud_msg);
     if (!plane.success) {
       result->success = false;
@@ -255,6 +285,7 @@ private:
       gh->abort(result);
       return;
     }
+
 
     // ---- yaw: 트림 평균 (지터 강건) ----
     int theta_n = 0;
@@ -272,6 +303,7 @@ private:
                   plane.y_error, plane.inlier_points, plane.input_points,
                   plane.a, plane.b, plane.c, plane.d,
                   theta * 180.0 / M_PI, theta_n);
+
     }
 
     feedback->progress = 1.0F;
@@ -284,6 +316,7 @@ private:
     std::lock_guard<std::mutex> lk(cloud_mutex_);
     if (cloud_cache_.empty()) return nullptr;
     return cloud_cache_.back();
+
   }
 
   static pcl::PointXYZ transformPoint(const pcl::PointXYZ &p,
@@ -324,12 +357,14 @@ private:
       return out;
     }
 
+
     const auto &tr = tf.transform.translation;
     const auto &qr = tf.transform.rotation;
     tf2::Matrix3x3 r(tf2::Quaternion(qr.x, qr.y, qr.z, qr.w));
 
     auto base_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
     base_cloud->points.reserve(source.points.size());
+
 
     for (const auto &p : source.points) {
       if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
@@ -399,6 +434,7 @@ private:
     out.success = true;
     out.message = "ok";
     return out;
+
   }
 
   // 트림 평균: median 근처 band 안의 샘플만 평균 (지터 강건).
@@ -457,6 +493,7 @@ private:
 
   std::string action_name_;
   std::string cloud_topic_;
+
   std::string edge_enable_service_name_;
   std::string edge_error_topic_;
   std::string target_frame_;
@@ -467,10 +504,12 @@ private:
   int ransac_min_inliers_ = 200;
   int ransac_max_iterations_ = 100;
   double ransac_distance_threshold_ = 0.02;
+
   double theta_trim_band_rad_ = 0.10;
   bool debug_log_ = true;
 
   rclcpp::Subscription<CloudMsg>::SharedPtr cloud_sub_;
+
   rclcpp::Subscription<ApproachError>::SharedPtr edge_error_sub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr active_pub_;
   rclcpp::Client<SetEnable>::SharedPtr edge_enable_client_;

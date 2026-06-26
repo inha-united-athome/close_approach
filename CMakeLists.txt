@@ -173,6 +173,7 @@ add_executable(y_nav_goal_decider_node
 add_executable(align_measure_node
   src/align_measure.cpp
 )
+
 # ── 라이브 파라미터 튜닝 테스트 노드 ────────────────────────────────────────
 add_executable(self_filter_tuner_node
   test/self_filter_tuner.cpp
@@ -535,7 +536,6 @@ ament_target_dependencies(align_decider_node
   tf2_ros
   tf2_geometry_msgs
   inha_interfaces
-<<<<<<< HEAD
 )
 
 ament_target_dependencies(y_decider_node
@@ -560,8 +560,19 @@ ament_target_dependencies(y_nav_goal_decider_node
   tf2
   tf2_ros
   inha_interfaces
-=======
->>>>>>> c105935 (임시 얼라인)
+)
+
+
+ament_target_dependencies(align_measure_node
+  rclcpp
+  rclcpp_action
+  geometry_msgs
+  std_msgs
+  sensor_msgs
+  pcl_conversions
+  tf2
+  tf2_ros
+  inha_interfaces
 )
 
 ament_target_dependencies(align_measure_node
@@ -924,6 +935,7 @@ ament_export_dependencies(
   vision_msgs
   visualization_msgs
   std_srvs
+  std_msgs
   message_filters
   pcl_conversions
   rclcpp

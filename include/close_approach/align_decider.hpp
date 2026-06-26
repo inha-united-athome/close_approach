@@ -26,6 +26,7 @@ public:
 private:
   using AlignDecider = inha_interfaces::action::AlignDecider;
   using GoalHandle = rclcpp_action::ServerGoalHandle<AlignDecider>;
+
   rclcpp_action::Server<AlignDecider>::SharedPtr server_;
 
   rclcpp_action::GoalResponse

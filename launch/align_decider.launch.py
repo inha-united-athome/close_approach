@@ -17,4 +17,10 @@ def generate_launch_description():
             parameters=[cfg],
             output="screen",
         ),
+        Node(
+            package="close_approach",
+            executable="align_measure_node",
+            name="align_measure",
+            output="screen",
+        ),
     ])

@@ -163,6 +163,10 @@ add_executable(align_decider_node
   src/align_decider.cpp
 )
 
+add_executable(y_decider_node
+  src/y_decider.cpp
+)
+
 # ── 라이브 파라미터 튜닝 테스트 노드 ────────────────────────────────────────
 add_executable(self_filter_tuner_node
   test/self_filter_tuner.cpp
@@ -293,6 +297,14 @@ target_include_directories(align_decider_node
     $<INSTALL_INTERFACE:include>
 )
 
+target_include_directories(y_decider_node
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+    ${PCL_INCLUDE_DIRS}
+    ${OpenCV_INCLUDE_DIRS}
+)
+
 target_include_directories(self_filter_tuner_node
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -329,6 +341,7 @@ target_compile_features(approach_controller_node PUBLIC cxx_std_17)
 target_compile_features(approach_debug_logger_node PUBLIC cxx_std_17)
 target_compile_features(visual_servo_node PUBLIC cxx_std_17)
 target_compile_features(align_decider_node PUBLIC cxx_std_17)
+target_compile_features(y_decider_node PUBLIC cxx_std_17)
 target_compile_features(self_filter_tuner_node PUBLIC cxx_std_17)
 target_compile_features(depth_edge_tuner_node PUBLIC cxx_std_17)
 
@@ -501,6 +514,18 @@ ament_target_dependencies(align_decider_node
   tf2_geometry_msgs
 )
 
+ament_target_dependencies(y_decider_node
+  rclcpp
+  rclcpp_action
+  geometry_msgs
+  sensor_msgs
+  visualization_msgs
+  pcl_conversions
+  tf2
+  tf2_ros
+  inha_interfaces
+)
+
 ament_target_dependencies(self_filter_tuner_node
   rclcpp
   sensor_msgs
@@ -666,6 +691,11 @@ target_link_libraries(depth_edge_tuner_node
   ${OpenCV_LIBS}
 )
 
+target_link_libraries(y_decider_node
+  ${PCL_LIBRARIES}
+  ${OpenCV_LIBS}
+)
+
 # tf2_geometry_msgs 직접 링크 보강
 # ROS2 배포판/패키지 구성에 따라 imported target이 있거나 없을 수 있어서 둘 다 대응
 if(TARGET tf2_geometry_msgs::tf2_geometry_msgs)
@@ -766,6 +796,11 @@ target_compile_definitions(approach_debug_logger_node
     ${PCL_DEFINITIONS}
 )
 
+target_compile_definitions(y_decider_node
+  PRIVATE
+    ${PCL_DEFINITIONS}
+)
+
 # =========================
 # Install
 # =========================
@@ -788,6 +823,7 @@ install(
     approach_debug_logger_node
     visual_servo_node
     align_decider_node
+    y_decider_node
     self_filter_tuner_node
     depth_edge_tuner_node
   DESTINATION lib/${PROJECT_NAME}

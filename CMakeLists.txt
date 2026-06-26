@@ -173,7 +173,6 @@ add_executable(y_nav_goal_decider_node
 add_executable(align_measure_node
   src/align_measure.cpp
 )
-
 # ── 라이브 파라미터 튜닝 테스트 노드 ────────────────────────────────────────
 add_executable(self_filter_tuner_node
   test/self_filter_tuner.cpp

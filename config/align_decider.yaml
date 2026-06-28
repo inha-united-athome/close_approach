@@ -1,6 +1,6 @@
 align_decider:
   ros__parameters:
-    input_frame:    "map"        # goal coords 가 들어오는 프레임
+    input_frame:    "map"        # goal coords 가 들어오는 프레임(1개 이상 허용)
     target_frame:   "base_nav"   # 계산 기준 프레임(로봇)
     turn_angle_deg: 45.0   # dog-leg 회전각 (5~85로 클램프). 횡 이동량 = 주행거리*sin(angle)
     debug_log:      true

@@ -1,6 +1,7 @@
 #include "close_approach/pc_detector.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +19,13 @@
 #include <tf2/utils.h>
 
 namespace {
+using SteadyClock = std::chrono::steady_clock;
+
+double elapsedMs(const SteadyClock::time_point &from,
+                 const SteadyClock::time_point &to) {
+  return std::chrono::duration<double, std::milli>(to - from).count();
+}
+
 void applySpatialRoiBounds(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud,
                            float x_min, float x_max, float y_abs_near,
                            float y_abs_far, float z_max) {
@@ -350,22 +358,56 @@ void PCDetector::lidarCallback(const CloudMsg::ConstSharedPtr &msg) {
 void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   if (!is_active_.load(std::memory_order_acquire)) return;
 
+  const auto callback_start = SteadyClock::now();
+  auto stage_start = callback_start;
+  std::ostringstream timing;
+  auto markStage = [&](const char *name) {
+    const auto now = SteadyClock::now();
+    timing << ' ' << name << '=' << elapsedMs(stage_start, now) << "ms";
+    if (cloud_) {
+      timing << '/' << cloud_->points.size() << "pts";
+    }
+    stage_start = now;
+  };
+  auto logTiming = [&](const char *outcome) {
+    if (!debug_log_) {
+      return;
+    }
+    const double total_ms = elapsedMs(callback_start, SteadyClock::now());
+    if (total_ms >= 500.0) {
+      RCLCPP_WARN_THROTTLE(
+          this->get_logger(), *this->get_clock(), 1000,
+          "pc_detector timing outcome=%s total=%.1fms%s",
+          outcome, total_ms, timing.str().c_str());
+    } else {
+      RCLCPP_INFO_THROTTLE(
+          this->get_logger(), *this->get_clock(), 1000,
+          "pc_detector timing outcome=%s total=%.1fms%s",
+          outcome, total_ms, timing.str().c_str());
+    }
+  };
+
   cloud_.reset(new pcl::PointCloud<pcl::PointXYZ>);
   kdtree_.reset(new pcl::search::KdTree<pcl::PointXYZ>);
 
   pcl::fromROSMsg(*msg, *cloud_);
+  markStage("from_ros");
   if (cloud_->empty()) {
+    logTiming("empty_input");
     publishInvalid("empty input cloud");
     return;
   }
 
   roi_filter_->voxel_downsampling(cloud_);
+  markStage("voxel");
 
   geometry_msgs::msg::TransformStamped tf;
   if (!getTransform(target_frame_, msg->header.frame_id, tf, msg->header.stamp)) {
+    logTiming("input_tf_unavailable");
     publishInvalid("input TF unavailable");
     return;
   }
+  markStage("tf");
 
   // Transform to target_frame + drop ground, then crop to the ROI BEFORE the
   // expensive statistical outlier removal. With a dense D455 cloud, running SOR
@@ -373,10 +415,13 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   // manager timed out before a single pc_error was produced (pc_rx=0). Cropping
   // to the ROI first shrinks the cloud so SOR/self-filter run in a few ms.
   roi_filter_->remove_ground(cloud_, tf.transform);
+  markStage("ground");
   applySpatialRoiBounds(cloud_, roi_x_min_,
                         roi_x_max_, roi_y_abs_near_, roi_y_abs_max_,
                         roi_z_max_);
+  markStage("roi");
   roi_filter_->remove_outliers(cloud_);
+  markStage("sor");
 
   // LiDAR fusion
   if (use_lidar_) {
@@ -391,13 +436,16 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
       }
     }
   }
+  markStage("lidar");
 
   // Remove robot self points (TF-driven box exclusion) before any target logic.
   // Critical when use_clustering=false, where the nearest point is taken as the
   // target and must never be the robot itself.
   applySelfFilter(cloud_, msg->header.stamp);
+  markStage("self_filter");
 
   if (cloud_->empty()) {
+    logTiming("empty_after_roi_self_filter");
     publishInvalid("empty after ROI/self_filter");
     return;
   }
@@ -414,6 +462,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
     out.header.frame_id = target_frame_;
     debug_cloud_pub_->publish(out);
   }
+  markStage("debug_cloud");
 
   // Target selection by clustering (optional). When disabled, the ROI +
   // self-filtered cloud is used directly and the front slice below treats the
@@ -427,7 +476,9 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
       anchor_ptr = &anchor_base;
     }
     roi_filter_->cluster_points(cloud_, kdtree_, min_cluster_area_, anchor_ptr);
+    markStage("cluster");
     if (cloud_->empty()) {
+      logTiming("empty_after_clustering");
       publishInvalid("empty after clustering");
       return;
     }
@@ -435,9 +486,11 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
     // XY projection. OBB/anchor is retained only for target association and RViz;
     // longitudinal control below no longer depends on its normal/yaw estimate.
     roi_filter_->projection_filter(cloud_);
+    markStage("projection");
     OBB        obb         = plane_filter_->compute_OBB(cloud_);
     TargetEdge target_edge = edge_extractor_->extract_edges(
         obb.center, obb.axis1, obb.axis2, obb.length1, obb.length2);
+    markStage("obb_edge");
 
     publishOBB(obb);
 
@@ -460,9 +513,11 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   float representative_y = 0.0F;
   if (!keepFrontFraction(cloud_, front_slice_ratio_, front_min_points_,
                          representative_x, representative_y)) {
+    logTiming("front_slice_unavailable");
     publishInvalid("front slice unavailable");
     return;
   }
+  markStage("front_slice");
 
   // Filtered cloud now visualizes exactly the points used for longitudinal x.
   {
@@ -472,6 +527,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
     out.header.frame_id = target_frame_;
     filtered_cloud_pub_->publish(out);
   }
+  markStage("filtered_cloud");
 
   // Colored debug cloud: the whole self-filtered cloud in white, with the front
   // slice actually used for x highlighted in red. Much easier to judge in a PCD
@@ -500,6 +556,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
     out.header.frame_id = target_frame_;
     colored_cloud_pub_->publish(out);
   }
+  markStage("colored_cloud");
 
   SE2Error candidate;
   candidate.x = representative_x;
@@ -568,6 +625,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   // used, so a far wall inside the ROI behind the target is discarded.
   float surface_yaw = 0.0f;
   const bool yaw_ok = computeSurfaceYaw(yaw_src, representative_x, surface_yaw);
+  markStage("surface_yaw");
 
   ApproachError err;
   err.header.stamp    = msg->header.stamp;
@@ -593,6 +651,8 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
     publishPcDebug(status.str());
   }
   pc_error_pub_->publish(err);
+  markStage("publish_error");
+  logTiming("valid");
 
   if (debug_log_) {
     RCLCPP_INFO_THROTTLE(

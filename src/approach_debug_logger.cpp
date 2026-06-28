@@ -10,6 +10,7 @@
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -184,6 +185,15 @@ private:
     has_image_ = false;
     has_cloud_ = false;
     pc_status_ = "none";
+    edge_ = ApproachError{};
+    pc_ = ApproachError{};
+    control_ = ApproachError{};
+    cmd_ = geometry_msgs::msg::Twist{};
+    image_ = ImageMsg{};
+    cloud_ = CloudMsg{};
+    session_start_time_ = this->now();
+    warned_no_image_ = false;
+    warned_no_cloud_ = false;
     session_dir_ = std::filesystem::path(output_dir_) /
                    ("approach_" + timeForFilename());
     try {
@@ -237,7 +247,8 @@ private:
 
     const std::uint64_t idx = sample_index_++;
     const std::string stem = sampleStem(idx);
-    const double t_sec = this->now().seconds();
+    const rclcpp::Time now = this->now();
+    const double t_sec = now.seconds();
 
     std::string image_file;
     if (save_images_ && has_image_) {
@@ -264,14 +275,31 @@ private:
       }
     }
 
+    const double session_age = (now - session_start_time_).seconds();
+    const double warn_after = std::max(1.0, sample_period_sec_ * 4.0);
+    if (save_images_ && !has_image_ && !warned_no_image_ &&
+        session_age >= warn_after) {
+      warned_no_image_ = true;
+      RCLCPP_WARN(this->get_logger(),
+                  "No debug image received %.1fs after session start on %s",
+                  session_age, image_topic_.c_str());
+    }
+    if (save_pcd_ && !has_cloud_ && !warned_no_cloud_ &&
+        session_age >= warn_after) {
+      warned_no_cloud_ = true;
+      RCLCPP_WARN(this->get_logger(),
+                  "No debug cloud received %.1fs after session start on %s",
+                  session_age, cloud_topic_.c_str());
+    }
+
     csv_ << idx << ',' << std::fixed << std::setprecision(6) << t_sec << ','
-         << state_ << ',' << stampSec(edge_.header) << ','
+         << state_ << ',' << (has_edge_ ? stampSec(edge_.header) : 0.0) << ','
          << (has_edge_ && edge_.valid) << ',' << edge_.theta_error << ','
          << deg(edge_.theta_error) << ',' << edge_.mean_y_px << ','
-         << stampSec(pc_.header) << ',' << (has_pc_ && pc_.valid) << ','
-         << pc_.surface_distance_m << ',' << pc_.x_error << ','
-         << pc_.y_error << ',' << csvToken(pc_status_) << ','
-         << stampSec(control_.header) << ','
+         << (has_pc_ ? stampSec(pc_.header) : 0.0) << ','
+         << (has_pc_ && pc_.valid) << ',' << pc_.surface_distance_m << ','
+         << pc_.x_error << ',' << pc_.y_error << ',' << csvToken(pc_status_)
+         << ',' << (has_control_ ? stampSec(control_.header) : 0.0) << ','
          << (has_control_ && control_.valid) << ',' << control_.x_error << ','
          << control_.theta_error << ',' << deg(control_.theta_error) << ','
          << (has_cmd_ ? cmd_.linear.x : 0.0) << ','
@@ -310,6 +338,7 @@ private:
   std::filesystem::path csv_path_;
   std::ofstream csv_;
   std::uint64_t sample_index_ = 0;
+  rclcpp::Time session_start_time_;
 
   std::string state_ = "IDLE";
   std::string pc_status_ = "none";
@@ -325,6 +354,8 @@ private:
   bool has_cmd_ = false;
   bool has_image_ = false;
   bool has_cloud_ = false;
+  bool warned_no_image_ = false;
+  bool warned_no_cloud_ = false;
 };
 
 int main(int argc, char **argv) {

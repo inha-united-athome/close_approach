@@ -79,9 +79,10 @@ void AlignDeciderNode::execute(std::shared_ptr<GoalHandle> gh) {
     return;
   }
 
-  // 중점 P (base_nav) = 변환된 좌표 배열 전체의 평균. 횡오차는 py, 전방은 px.
+  // 기준점 P (base_nav): 1개면 해당 좌표, 2개 이상이면 변환된 좌표 배열의 평균.
   float px = 0.0f, py = 0.0f, pz = 0.0f;
-  const float n = static_cast<float>(goal->coords.size());
+  const auto coord_count = goal->coords.size();
+  const float n = static_cast<float>(coord_count);
   for (const auto &p : goal->coords) {
     geometry_msgs::msg::PointStamped in, out;
     in.header.frame_id = input_frame_;
@@ -109,8 +110,10 @@ void AlignDeciderNode::execute(std::shared_ptr<GoalHandle> gh) {
 
   if (debug_log_) {
     RCLCPP_INFO(this->get_logger(),
-                "midpoint=(%.3f, %.3f) -> turn %s %.1f deg, drive %.3f m",
-                px, py, result->direction.c_str(),
+                "target_point=(%.3f, %.3f, from %zu coord%s) -> "
+                "turn %s %.1f deg, drive %.3f m",
+                px, py, coord_count, coord_count == 1 ? "" : "s",
+                result->direction.c_str(),
                 std::abs(result->turn_angle_deg), result->remain_distance);
   }
 

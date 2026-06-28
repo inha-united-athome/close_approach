@@ -368,12 +368,29 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   // to the ROI first shrinks the cloud so SOR/self-filter run in a few ms.
   roi_filter_->remove_ground(cloud_, tf.transform);
   markStage("ground");
+  if (cloud_->empty()) {
+    logTiming("empty_after_ground");
+    publishInvalid("empty after ground filter");
+    return;
+  }
+
   applySpatialRoiBounds(cloud_, roi_x_min_,
                         roi_x_max_, roi_y_abs_near_, roi_y_abs_max_,
                         roi_z_max_);
   markStage("roi");
+  if (cloud_->empty()) {
+    logTiming("empty_after_spatial_roi");
+    publishInvalid("empty after spatial ROI");
+    return;
+  }
+
   roi_filter_->remove_outliers(cloud_);
   markStage("sor");
+  if (cloud_->empty()) {
+    logTiming("empty_after_sor");
+    publishInvalid("empty after statistical outlier removal");
+    return;
+  }
 
   markStage("camera_only");
 
@@ -384,8 +401,8 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   markStage("self_filter");
 
   if (cloud_->empty()) {
-    logTiming("empty_after_roi_self_filter");
-    publishInvalid("empty after ROI/self_filter");
+    logTiming("empty_after_self_filter");
+    publishInvalid("empty after self_filter");
     return;
   }
 

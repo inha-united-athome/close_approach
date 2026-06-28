@@ -10,6 +10,7 @@ def generate_launch_description():
     depth_engine = LaunchConfiguration("depth_engine")
 
     cfg_pc = PathJoinSubstitution([pkg, "config", "pc_detector_d455.yaml"])
+    cfg_lidar = PathJoinSubstitution([pkg, "config", "lidar_x_detector.yaml"])
     cfg_edge = PathJoinSubstitution([pkg, "config", "depth_edge_detector_d455.yaml"])
     cfg_manager = PathJoinSubstitution([pkg, "config", "approach_manager.yaml"])
     cfg_ctrl = PathJoinSubstitution([pkg, "config", "approach_controller.yaml"])
@@ -30,6 +31,13 @@ def generate_launch_description():
             executable="pc_detector_node",
             name="pc_detector",
             parameters=[cfg_pc],
+            output="screen",
+        ),
+        Node(
+            package="close_approach",
+            executable="lidar_x_detector_node",
+            name="lidar_x_detector",
+            parameters=[cfg_lidar],
             output="screen",
         ),
         Node(

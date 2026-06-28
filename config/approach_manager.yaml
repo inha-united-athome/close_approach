@@ -9,6 +9,8 @@ approach_manager:
     dwell_duration_sec: 0.5   # 정착 확인 시간 (멈추는 데 ~0.2s). 2.0→1.0; 깔끔하면 0.5까지 더 낮춤 가능
     align_timeout_sec:  2.0
     pc_timeout_sec:     2.0    # fresh PC x가 이 시간 없으면 종료 판정 (끊김 더 버티게 2.0→3.0)
+    lidar_timeout_sec:  0.4    # LiDAR x fallback/safety freshness
+    lidar_safety_margin: 0.05  # LiDAR가 camera보다 이만큼 더 가까우면 LiDAR x 우선
     x_hold_sec:         0.4    # 짧은 invalid 버스트는 직전 유효 x로 메워 끊김 방지 (< pc_timeout_sec)
     theta_timeout_sec:  0.5    # 신선한 yaw가 이 시간 없으면 θ명령=0 (stale 값으로 계속 회전 방지)
     yaw_jitter_success_sec: 2.0 # x 도착 후 yaw가 이 시간 동안 흔들리면 곡면/불안정 yaw로 보고 성공 종료

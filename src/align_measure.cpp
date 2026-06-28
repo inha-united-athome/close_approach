@@ -3,11 +3,8 @@
 // 액션을 받으면
 //   1) /approach/active 를 올리고 depth_edge_detector 를 SetEnable 서비스로 켜고,
 //   2) /approach/edge_error 의 theta_error 를 짧게 누적해 평탄화(yaw),
-<<<<<<< HEAD
 //   3) 최신 포인트클라우드를 base 프레임으로 변환한 뒤 RANSAC 평면 inlier의
 //      평균 y 로 y_error 를 측정,
-=======
-	//   3) 세그멘테이션 마스크 + 포인트클라우드로 테이블 점을 bas
 //   4) edge_detector 와 /approach/active 를 끄고 결과로 반환.
 #include "inha_interfaces/action/align_measure.hpp"
 #include "close_approach/msg/approach_error.hpp"
@@ -19,17 +16,14 @@
 #include <cmath>
 #include <cstdint>
 #include <deque>
-<<<<<<< HEAD
 #include <functional>
 #include <future>
-=======
 #include <limits>
->>>>>>> a25352d (0626)
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
-<<<<<<< HEAD
+#include <utility>
 #include <vector>
 
 #include <pcl/ModelCoefficients.h>
@@ -37,23 +31,10 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/segmentation/sac_segmentation.h>
-=======
-#include <utility>
-#include <vector>
-
-#include <opencv2/imgcodecs.hpp>
-#include <opencv2/imgproc.hpp>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
->>>>>>> a25352d (0626)
 #include <pcl_conversions/pcl_conversions.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
-<<<<<<< HEAD
-=======
-#include <sensor_msgs/msg/camera_info.hpp>
-#include <sensor_msgs/msg/compressed_image.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <tf2/LinearMath/Matrix3x3.h>

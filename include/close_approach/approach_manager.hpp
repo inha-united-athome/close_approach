@@ -42,6 +42,7 @@ private:
 
   // Subscribers
   rclcpp::Subscription<ApproachError>::SharedPtr pc_error_sub_;
+  rclcpp::Subscription<ApproachError>::SharedPtr lidar_error_sub_;
   rclcpp::Subscription<ApproachError>::SharedPtr edge_error_sub_;
 
   // Publishers
@@ -61,9 +62,12 @@ private:
 
   // Cached sensor inputs
   ApproachError::SharedPtr latest_pc_error_;
+  ApproachError::SharedPtr latest_lidar_error_;
   std::mutex               pc_mutex_;
   std::uint64_t            pc_error_rx_count_ = 0;
   std::uint64_t            pc_error_valid_count_ = 0;
+  std::uint64_t            lidar_error_rx_count_ = 0;
+  std::uint64_t            lidar_error_valid_count_ = 0;
   float                    last_good_x_err_   = 0.0f;  // last valid longitudinal x
   float                    last_theta_rad_    = 0.0f;
   bool                     theta_initialized_ = false;
@@ -97,6 +101,8 @@ private:
   float x_converged_hold_sec_;
   float trail_min_dist_, trail_min_yaw_;
   float pc_timeout_sec_;
+  float lidar_timeout_sec_;
+  float lidar_safety_margin_;
   float x_hold_sec_;       // bridge brief invalid PC bursts with last good x
   float theta_timeout_sec_;  // no fresh yaw for this long -> stop rotating
   float yaw_jitter_success_sec_;
@@ -107,6 +113,7 @@ private:
   float yaw_fail_rad_;     // |yaw| >= this at give-up -> FAIL
   float x_fail_dist_;      // |x_error| >= this when lost -> FAIL (lost while far)
   rclcpp::Time last_valid_pc_time_;
+  rclcpp::Time last_valid_lidar_time_;
   std::string  odom_frame_, target_frame_;
   std::string  edge_enable_service_name_;
   bool debug_log_ = true;

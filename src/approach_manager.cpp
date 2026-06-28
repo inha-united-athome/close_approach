@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <thread>
 
@@ -20,6 +21,8 @@ ApproachManager::ApproachManager()
   this->declare_parameter<float>("dwell_duration_sec", 2.0F);
   this->declare_parameter<float>("align_timeout_sec",  5.0F);
   this->declare_parameter<float>("pc_timeout_sec",     2.0F);
+  this->declare_parameter<float>("lidar_timeout_sec",  0.4F);
+  this->declare_parameter<float>("lidar_safety_margin", 0.05F);
   this->declare_parameter<float>("x_hold_sec",         0.2F);
   this->declare_parameter<float>("theta_timeout_sec",  1.0F);
   this->declare_parameter<float>("yaw_jitter_success_sec", 2.0F);
@@ -41,6 +44,8 @@ ApproachManager::ApproachManager()
   this->get_parameter("dwell_duration_sec", dwell_duration_sec_);
   this->get_parameter("align_timeout_sec",  align_timeout_sec_);
   this->get_parameter("pc_timeout_sec",     pc_timeout_sec_);
+  this->get_parameter("lidar_timeout_sec",  lidar_timeout_sec_);
+  this->get_parameter("lidar_safety_margin", lidar_safety_margin_);
   this->get_parameter("x_hold_sec",         x_hold_sec_);
   this->get_parameter("theta_timeout_sec",  theta_timeout_sec_);
   this->get_parameter("yaw_jitter_success_sec", yaw_jitter_success_sec_);
@@ -63,6 +68,8 @@ ApproachManager::ApproachManager()
   this->get_parameter("odom_frame",         odom_frame_);
   this->get_parameter("edge_enable_service_name", edge_enable_service_name_);
   this->get_parameter("debug_log",          debug_log_);
+  lidar_timeout_sec_ = std::max(0.05F, lidar_timeout_sec_);
+  lidar_safety_margin_ = std::max(0.0F, lidar_safety_margin_);
 
   auto qos_rel = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
 
@@ -77,11 +84,6 @@ ApproachManager::ApproachManager()
           ++pc_error_valid_count_;
           normalized->x_error = goalRelativeXError(*msg);
           last_valid_pc_time_ = this->now();
-          last_good_x_err_    = normalized->x_error;
-          if (!initial_dist_set_) {
-            initial_dist_ = std::abs(normalized->x_error);
-            initial_dist_set_ = true;
-          }
         }
         if (debug_log_) {
           RCLCPP_INFO_THROTTLE(
@@ -101,6 +103,30 @@ ApproachManager::ApproachManager()
           last_pc_yaw_time_ = this->now();
         }
         latest_pc_error_ = normalized;
+      });
+
+  lidar_error_sub_ = this->create_subscription<ApproachError>(
+      "/approach/lidar_error", qos_rel,
+      [this](const ApproachError::SharedPtr msg) {
+        std::lock_guard<std::mutex> lk(pc_mutex_);
+        ++lidar_error_rx_count_;
+        auto normalized = std::make_shared<ApproachError>(*msg);
+        if (msg->valid) {
+          ++lidar_error_valid_count_;
+          normalized->x_error = goalRelativeXError(*msg);
+          last_valid_lidar_time_ = this->now();
+        }
+        if (debug_log_) {
+          RCLCPP_INFO_THROTTLE(
+              this->get_logger(), *this->get_clock(), 300,
+              "lidar_error rx count=%llu valid_count=%llu valid=%d raw_x=%.3f "
+              "surface=%.3f normalized_x=%.3f",
+              static_cast<unsigned long long>(lidar_error_rx_count_),
+              static_cast<unsigned long long>(lidar_error_valid_count_),
+              msg->valid, msg->x_error, msg->surface_distance_m,
+              normalized->x_error);
+        }
+        latest_lidar_error_ = normalized;
       });
 
   edge_error_sub_ = this->create_subscription<ApproachError>(
@@ -224,9 +250,9 @@ void ApproachManager::execute(std::shared_ptr<GoalHandle> gh) {
     // Publish feedback
     {
       std::lock_guard<std::mutex> lk(pc_mutex_);
-      if (latest_pc_error_) {
-        feedback->x_error     = latest_pc_error_->x_error;
-        feedback->y_error     = latest_pc_error_->y_error;
+      if (initial_dist_set_) {
+        feedback->x_error     = last_good_x_err_;
+        feedback->y_error     = 0.0F;
         feedback->theta_error = static_cast<float>(last_theta_rad_);
         gh->publish_feedback(feedback);
       }
@@ -247,32 +273,76 @@ void ApproachManager::stateMachineCallback() {
 
   const auto now = this->now();
 
-  // Read latest PC error
+  // Read latest range errors. Camera pointcloud is primary; LiDAR is fallback
+  // when camera is stale/invalid and safety override when it sees something
+  // meaningfully closer than camera.
   float x_err  = 0.0f;
   bool  x_valid = false;
   bool  x_held  = false;
+  std::string x_source = "none";
+  double since_pc_valid = std::numeric_limits<double>::infinity();
+  double since_lidar_valid = std::numeric_limits<double>::infinity();
   {
     std::lock_guard<std::mutex> lk(pc_mutex_);
-    const double since_valid = (now - last_valid_pc_time_).seconds();
+    since_pc_valid = (now - last_valid_pc_time_).seconds();
+    since_lidar_valid = (now - last_valid_lidar_time_).seconds();
+    float camera_x = 0.0F;
+    bool camera_valid = false;
+    bool camera_held = false;
+    float lidar_x = 0.0F;
+    bool lidar_valid = false;
     if (latest_pc_error_ && latest_pc_error_->valid &&
-        since_valid <= static_cast<double>(pc_timeout_sec_)) {
-      x_err   = latest_pc_error_->x_error;
-      x_valid = true;
+        since_pc_valid <= static_cast<double>(pc_timeout_sec_)) {
+      camera_x = latest_pc_error_->x_error;
+      camera_valid = true;
     } else if (initial_dist_set_ &&
-               since_valid <= static_cast<double>(x_hold_sec_)) {
+               since_pc_valid <= static_cast<double>(x_hold_sec_)) {
       // Bridge a brief invalid burst (a dropped frame or the short spike-verify
       // window in pc_detector) with the last good longitudinal estimate, so the
       // controller does not see validity toggle and command a hard stop/go.
-      x_err   = last_good_x_err_;
+      camera_x = last_good_x_err_;
+      camera_valid = true;
+      camera_held = true;
+    }
+    if (latest_lidar_error_ && latest_lidar_error_->valid &&
+        since_lidar_valid <= static_cast<double>(lidar_timeout_sec_)) {
+      lidar_x = latest_lidar_error_->x_error;
+      lidar_valid = true;
+    }
+
+    if (camera_valid && !camera_held) {
+      x_err = camera_x;
       x_valid = true;
-      x_held  = true;
+      x_source = "camera";
+      if (lidar_valid && lidar_x + lidar_safety_margin_ < camera_x) {
+        x_err = lidar_x;
+        x_source = "lidar_safety_min";
+      }
+    } else if (lidar_valid) {
+      x_err = lidar_x;
+      x_valid = true;
+      x_source = camera_held ? "lidar_fallback_from_hold"
+                             : "lidar_fallback";
+    } else if (camera_valid) {
+      x_err = camera_x;
+      x_valid = true;
+      x_held = camera_held;
+      x_source = "camera_hold";
+    }
+
+    if (x_valid) {
+      last_good_x_err_ = x_err;
+      if (!initial_dist_set_) {
+        initial_dist_ = std::abs(x_err);
+        initial_dist_set_ = true;
+      }
     }
   }
 
-  // PC timeout (only warn in APPROACH)
-  const bool pc_timed_out = !x_valid &&
-      (now - last_valid_pc_time_).seconds() >
-          static_cast<double>(pc_timeout_sec_);
+  // Range timeout (only warn in APPROACH)
+  const bool range_timed_out = !x_valid &&
+      since_pc_valid > static_cast<double>(pc_timeout_sec_) &&
+      since_lidar_valid > static_cast<double>(lidar_timeout_sec_);
 
   // Yaw source priority: fresh image edge yaw → else plane-normal yaw fallback
   // (vertical surface) → else 0. A held (stale) value must NOT keep the robot
@@ -295,8 +365,10 @@ void ApproachManager::stateMachineCallback() {
   if (debug_log_) {
     RCLCPP_INFO_THROTTLE(
         this->get_logger(), *this->get_clock(), 300,
-        "manager state=%s x_valid=%d held=%d x=%.4f theta=%.4f deg src=%s",
+        "manager state=%s x_valid=%d held=%d x=%.4f x_src=%s "
+        "pc_age=%.2f lidar_age=%.2f theta=%.4f deg yaw_src=%s",
         stateStr(), x_valid, x_held, x_err,
+        x_source.c_str(), since_pc_valid, since_lidar_valid,
         theta_err * 180.0f / static_cast<float>(M_PI),
         edge_fresh ? "edge" : (pc_yaw_fresh ? "pc_plane" : "none"));
   }
@@ -329,12 +401,16 @@ void ApproachManager::stateMachineCallback() {
     bool terminal_x_initialized = false;
     std::uint64_t terminal_pc_rx_count = 0;
     std::uint64_t terminal_pc_valid_count = 0;
+    std::uint64_t terminal_lidar_rx_count = 0;
+    std::uint64_t terminal_lidar_valid_count = 0;
     {
       std::lock_guard<std::mutex> lk(pc_mutex_);
       terminal_x = last_good_x_err_;
       terminal_x_initialized = initial_dist_set_;
       terminal_pc_rx_count = pc_error_rx_count_;
       terminal_pc_valid_count = pc_error_valid_count_;
+      terminal_lidar_rx_count = lidar_error_rx_count_;
+      terminal_lidar_valid_count = lidar_error_valid_count_;
     }
     const bool x_ok = terminal_x_initialized &&
                       std::abs(terminal_x) < x_fail_dist_;
@@ -353,16 +429,21 @@ void ApproachManager::stateMachineCallback() {
            << std::setprecision(3) << terminal_x << "m x_ok=" << x_ok
            << ", yaw=" << yaw_deg << "deg yaw_ok=" << yaw_ok
            << ", pc_rx=" << terminal_pc_rx_count
-           << ", pc_valid_rx=" << terminal_pc_valid_count << ")";
+           << ", pc_valid_rx=" << terminal_pc_valid_count
+           << ", lidar_rx=" << terminal_lidar_rx_count
+           << ", lidar_valid_rx=" << terminal_lidar_valid_count << ")";
         failure_message_ = ss.str();
       }
       action_failed_ = true;
       RCLCPP_ERROR(this->get_logger(),
                    "%s, pose NOT acceptable (x=%.3fm x_ok=%d, yaw=%.2fdeg "
-                   "yaw_ok=%d, pc_rx=%llu valid_rx=%llu) → FAIL",
+                   "yaw_ok=%d, pc_rx=%llu valid_rx=%llu lidar_rx=%llu "
+                   "lidar_valid_rx=%llu) → FAIL",
                    reason, terminal_x, x_ok, yaw_deg, yaw_ok,
                    static_cast<unsigned long long>(terminal_pc_rx_count),
-                   static_cast<unsigned long long>(terminal_pc_valid_count));
+                   static_cast<unsigned long long>(terminal_pc_valid_count),
+                   static_cast<unsigned long long>(terminal_lidar_rx_count),
+                   static_cast<unsigned long long>(terminal_lidar_valid_count));
     }
   };
 
@@ -373,8 +454,8 @@ void ApproachManager::stateMachineCallback() {
       ctrl.valid = x_valid;
       control_error_pub_->publish(ctrl);
 
-      if (pc_timed_out) {
-        resolveTerminal("PC timeout in APPROACH");
+      if (range_timed_out) {
+        resolveTerminal("Range timeout in APPROACH");
         break;
       }
       if (!x_ready) {
@@ -438,8 +519,8 @@ void ApproachManager::stateMachineCallback() {
         RCLCPP_WARN(this->get_logger(),
                     "ALIGN_THETA → APPROACH (x moved out: %.3f)", x_err);
         state_ = State::APPROACH;
-      } else if (pc_timed_out) {
-        resolveTerminal("PC timeout in ALIGN_THETA");
+      } else if (range_timed_out) {
+        resolveTerminal("Range timeout in ALIGN_THETA");
       } else if (theta_fresh && std::abs(theta_err) < tol_theta_) {
         if (!x_valid) {
           // Wait for a fresh longitudinal estimate; never declare DWELL from
@@ -462,8 +543,8 @@ void ApproachManager::stateMachineCallback() {
 
       // DWELL is a stability check, not an unconditional success delay.
       // A noisy one-frame x/theta estimate must return to active correction.
-      if (pc_timed_out) {
-        resolveTerminal("PC timeout in DWELL");
+      if (range_timed_out) {
+        resolveTerminal("Range timeout in DWELL");
         break;
       }
       // Yaw was already confirmed < tol_theta at DWELL entry and the robot is
@@ -632,12 +713,16 @@ void ApproachManager::startApproach(float standoff) {
   x_convergence_pending_ = false;
   resetYawJitterWatchdog();
   last_valid_pc_time_  = this->now();
+  last_valid_lidar_time_ = this->now();
 
   {
     std::lock_guard<std::mutex> lk(pc_mutex_);
     latest_pc_error_.reset();
+    latest_lidar_error_.reset();
     pc_error_rx_count_ = 0;
     pc_error_valid_count_ = 0;
+    lidar_error_rx_count_ = 0;
+    lidar_error_valid_count_ = 0;
     last_good_x_err_ = 0.0f;
   }
 
@@ -667,10 +752,14 @@ void ApproachManager::stopApproach() {
   {
     std::lock_guard<std::mutex> lk(pc_mutex_);
     latest_pc_error_.reset();
+    latest_lidar_error_.reset();
     pc_error_rx_count_ = 0;
     pc_error_valid_count_ = 0;
+    lidar_error_rx_count_ = 0;
+    lidar_error_valid_count_ = 0;
     last_good_x_err_ = 0.0f;
     last_valid_pc_time_ = this->now();
+    last_valid_lidar_time_ = this->now();
   }
   theta_initialized_ = false;
   last_theta_rad_ = 0.0F;

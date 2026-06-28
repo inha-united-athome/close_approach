@@ -132,6 +132,11 @@ add_executable(pc_detector_node
   src/error_estimator.cpp
 )
 
+add_executable(lidar_x_detector_node
+  src/lidar_x_detector.cpp
+  src/roi_filter.cpp
+)
+
 add_executable(edge_detector_node
   src/edge_detector.cpp
 )
@@ -257,6 +262,14 @@ target_include_directories(pc_detector_node
     ${OpenCV_INCLUDE_DIRS}
 )
 
+target_include_directories(lidar_x_detector_node
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+    ${PCL_INCLUDE_DIRS}
+    ${EIGEN3_INCLUDE_DIR}
+)
+
 target_include_directories(edge_detector_node
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -355,6 +368,7 @@ target_compile_features(bev_viewer_node PUBLIC cxx_std_17)
 target_compile_features(edge_yaw_viewer_node PUBLIC cxx_std_17)
 target_compile_features(depth_anything_image_test PUBLIC cxx_std_17)
 target_compile_features(pc_detector_node PUBLIC cxx_std_17)
+target_compile_features(lidar_x_detector_node PUBLIC cxx_std_17)
 target_compile_features(edge_detector_node PUBLIC cxx_std_17)
 target_compile_features(depth_edge_detector_node PUBLIC cxx_std_17)
 target_compile_features(approach_manager_node PUBLIC cxx_std_17)
@@ -479,6 +493,17 @@ ament_target_dependencies(pc_detector_node
   tf2
   tf2_ros
   tf2_geometry_msgs
+)
+
+ament_target_dependencies(lidar_x_detector_node
+  rclcpp
+  std_msgs
+  sensor_msgs
+  geometry_msgs
+  vision_msgs
+  pcl_conversions
+  tf2
+  tf2_ros
 )
 
 ament_target_dependencies(edge_detector_node
@@ -731,6 +756,10 @@ target_link_libraries(pc_detector_node
   ${OpenCV_LIBS}
 )
 
+target_link_libraries(lidar_x_detector_node
+  ${PCL_LIBRARIES}
+)
+
 target_link_libraries(edge_detector_node
   ${OpenCV_LIBS}
 )
@@ -828,7 +857,8 @@ endif()
 rosidl_get_typesupport_target(cpp_typesupport_target
   ${PROJECT_NAME} rosidl_typesupport_cpp)
 
-foreach(_target pc_detector_node edge_detector_node depth_edge_detector_node
+foreach(_target pc_detector_node lidar_x_detector_node
+                edge_detector_node depth_edge_detector_node
                 approach_manager_node approach_controller_node
                 approach_debug_logger_node align_measure_node)
   target_link_libraries(${_target} "${cpp_typesupport_target}")
@@ -862,6 +892,11 @@ target_compile_definitions(approach_debug_logger_node
     ${PCL_DEFINITIONS}
 )
 
+target_compile_definitions(lidar_x_detector_node
+  PRIVATE
+    ${PCL_DEFINITIONS}
+)
+
 target_compile_definitions(y_decider_node
   PRIVATE
     ${PCL_DEFINITIONS}
@@ -887,6 +922,7 @@ install(
     edge_yaw_viewer_node
     depth_anything_image_test
     pc_detector_node
+    lidar_x_detector_node
     edge_detector_node
     depth_edge_detector_node
     approach_manager_node

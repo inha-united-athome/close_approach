@@ -1,0 +1,33 @@
+lidar_x_detector:
+  ros__parameters:
+    lidar_topic: "/livox/lidar"
+    target_frame: "base_nav"
+
+    roi_x_min: 0.1
+    roi_x_max: 3.0
+    roi_y_abs_near: 0.3
+    roi_y_abs_max: 0.8
+    roi_z_max: 1.5
+
+    leaf_size: 0.06
+    mean_k: 50
+    stddev_mul_thresh: 0.5
+    ground_height: 0.1
+
+    # lidar_x_detector는 camera pc_detector가 끊겼을 때의 대체 x와,
+    # camera보다 가까운 장애물 safety x만 담당한다.
+    target_standoff_distance: 0.3
+    front_slice_ratio: 0.05
+    front_min_points: 5
+    debug_log: true
+
+    self_filter:
+      enabled: true
+      padding: 0.03
+      frames: ["base","link_torso_0","link_torso_1","link_torso_2","link_torso_4","link_torso_5","link_right_arm_0","link_right_arm_1","link_right_arm_2","link_right_arm_3","link_right_arm_4","link_right_arm_5","link_left_arm_0","link_left_arm_1","link_left_arm_2","link_left_arm_3","link_left_arm_4","link_left_arm_5"]
+      size_x:   [0.40, 0.44, 0.23, 0.19, 0.41, 0.31, 0.22, 0.10, 0.10, 0.08, 0.07, 0.15, 0.22, 0.10, 0.10, 0.08, 0.07, 0.15]
+      size_y:   [0.64, 0.21, 0.23, 0.19, 0.21, 0.31, 0.15, 0.10, 0.18, 0.08, 0.07, 0.15, 0.15, 0.10, 0.18, 0.08, 0.07, 0.15]
+      size_z:   [0.30, 0.21, 0.45, 0.35, 0.21, 0.445, 0.15, 0.30, 0.10, 0.195, 0.165, 0.3713, 0.15, 0.30, 0.10, 0.195, 0.165, 0.3713]
+      offset_x: [0.0, -0.115, 0.010, 0.025, -0.070, 0.0, -0.015, 0.0, 0.026, -0.031, 0.0, 0.0, -0.015, 0.0, 0.026, -0.031, 0.0, 0.0]
+      offset_y: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.018, 0.0, 0.0, 0.0, -0.038, 0.0, -0.018, 0.0, 0.0, 0.0, 0.038, 0.0]
+      offset_z: [0.14, 0.0, 0.240, 0.230, 0.0385, 0.0075, -0.008, -0.1, -0.276, -0.1075, 0.0175, -0.08565, -0.008, -0.1, -0.276, -0.1075, 0.0175, -0.08565]

@@ -109,7 +109,6 @@ PCDetector::PCDetector()
 
   // Params
   this->declare_parameter<std::string>("cloud_topic",  "/camera/camera_head/depth/color/points");
-  this->declare_parameter<std::string>("lidar_topic",  "/livox/lidar");
   this->declare_parameter<std::string>("info_topic",   "/camera/camera_head/color/camera_info");
   this->declare_parameter<std::string>("target_frame", "base_nav");
   this->declare_parameter<std::string>("odom_frame",   "odom");
@@ -132,11 +131,9 @@ PCDetector::PCDetector()
   this->declare_parameter<float>("x_ema_alpha",             0.80F);
   this->declare_parameter<float>("spike_dx_max",            0.15F);
   this->declare_parameter<int>  ("max_consecutive_outliers", 5);
-  this->declare_parameter<float>("lidar_max_age_sec",      0.3F);
   this->declare_parameter<bool> ("debug_log",              true);
 
   this->declare_parameter<bool> ("use_clustering",        true);
-  this->declare_parameter<bool> ("use_lidar",             true);
   this->declare_parameter<bool> ("self_filter.enabled",   false);
   this->declare_parameter<double>("self_filter.padding",  0.03);
   this->declare_parameter<std::vector<std::string>>("self_filter.frames", {});
@@ -148,7 +145,6 @@ PCDetector::PCDetector()
   this->declare_parameter<std::vector<double>>("self_filter.offset_z", {});
 
   this->get_parameter("cloud_topic",  cloud_topic_);
-  this->get_parameter("lidar_topic",  lidar_topic_);
   this->get_parameter("info_topic",   info_topic_);
   this->get_parameter("target_frame", target_frame_);
   this->get_parameter("odom_frame",   odom_frame_);
@@ -173,7 +169,6 @@ PCDetector::PCDetector()
   this->get_parameter("x_ema_alpha",           x_ema_alpha_);
   this->get_parameter("spike_dx_max",          spike_dx_max_);
   this->get_parameter("max_consecutive_outliers", max_consecutive_outliers_);
-  this->get_parameter("lidar_max_age_sec",    lidar_max_age_sec_);
   this->get_parameter("debug_log",            debug_log_);
   front_slice_ratio_ = std::clamp(front_slice_ratio_, 0.01F, 1.0F);
   front_min_points_ = std::max(1, front_min_points_);
@@ -181,7 +176,6 @@ PCDetector::PCDetector()
   spike_dx_max_ = std::max(0.0F, spike_dx_max_);
 
   this->get_parameter("use_clustering", use_clustering_);
-  this->get_parameter("use_lidar", use_lidar_);
   {
     double pad = 0.03;
     this->get_parameter("self_filter.enabled", self_filter_enabled_);
@@ -255,15 +249,6 @@ PCDetector::PCDetector()
   cloud_sub_   = this->create_subscription<CloudMsg>(
       cloud_topic_, qos_be_,
       std::bind(&PCDetector::cloudCallback, this, std::placeholders::_1));
-  if (use_lidar_) {
-    lidar_sub_ = this->create_subscription<CloudMsg>(
-        lidar_topic_, qos_be_,
-        std::bind(&PCDetector::lidarCallback, this, std::placeholders::_1));
-    RCLCPP_INFO(this->get_logger(), "LiDAR fusion enabled (topic=%s)",
-                lidar_topic_.c_str());
-  } else {
-    RCLCPP_INFO(this->get_logger(), "LiDAR fusion disabled (use_lidar=false)");
-  }
   cam_info_sub_= this->create_subscription<CamInfoMsg>(
       info_topic_, qos_be_,
       std::bind(&PCDetector::camInfoCallback, this, std::placeholders::_1));
@@ -310,11 +295,6 @@ void PCDetector::activeCallback(const std_msgs::msg::Bool::SharedPtr msg) {
     consecutive_outliers_ = 0;
     cloud_.reset();
     kdtree_.reset();
-    {
-      std::lock_guard<std::mutex> lk(lidar_mutex_);
-      lidar_cache_.reset();
-      lidar_stamp_ = rclcpp::Time(0, 0, this->get_clock()->get_clock_type());
-    }
     RCLCPP_INFO(this->get_logger(),
                 "Inactive: all point-cloud estimator caches cleared");
   }
@@ -325,34 +305,6 @@ void PCDetector::camInfoCallback(const CamInfoMsg::SharedPtr msg) {
   roi_filter_->setCameraInfo(msg->k[0], msg->k[4], msg->k[2], msg->k[5]);
   received_camera_info_ = true;
   RCLCPP_INFO(this->get_logger(), "CameraInfo received");
-}
-
-void PCDetector::lidarCallback(const CloudMsg::ConstSharedPtr &msg) {
-  if (!is_active_.load(std::memory_order_acquire)) return;
-
-  auto lidar_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
-  pcl::fromROSMsg(*msg, *lidar_cloud);
-  if (lidar_cloud->empty()) return;
-
-  roi_filter_->voxel_downsampling(lidar_cloud);
-
-  geometry_msgs::msg::TransformStamped tf;
-  try {
-    tf = tf_buffer_.lookupTransform(target_frame_, msg->header.frame_id,
-                                    tf2::TimePointZero, tf2::durationFromSec(0.2));
-  } catch (const tf2::TransformException &ex) {
-    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                         "lidar TF failed: %s", ex.what());
-    return;
-  }
-  // Crop to ROI before SOR (see cloudCallback) to keep per-frame cost low.
-  roi_filter_->remove_ground(lidar_cloud, tf.transform);
-  applySpatialRoi(lidar_cloud);
-  roi_filter_->remove_outliers(lidar_cloud);
-
-  std::lock_guard<std::mutex> lk(lidar_mutex_);
-  lidar_cache_ = lidar_cloud;
-  lidar_stamp_ = msg->header.stamp;
 }
 
 void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
@@ -423,20 +375,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   roi_filter_->remove_outliers(cloud_);
   markStage("sor");
 
-  // LiDAR fusion
-  if (use_lidar_) {
-    std::lock_guard<std::mutex> lk(lidar_mutex_);
-    if (lidar_cache_ && !lidar_cache_->empty()) {
-      const double age = (this->now() - lidar_stamp_).seconds();
-      if (age < static_cast<double>(lidar_max_age_sec_)) {
-        *cloud_ += *lidar_cache_;
-      } else {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                             "Stale lidar cloud (%.2fs), skipping", age);
-      }
-    }
-  }
-  markStage("lidar");
+  markStage("camera_only");
 
   // Remove robot self points (TF-driven box exclusion) before any target logic.
   // Critical when use_clustering=false, where the nearest point is taken as the
@@ -641,7 +580,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   err.mean_y_px       = 0.0f;
   {
     std::ostringstream status;
-    status << "valid surface_x=" << err.surface_distance_m
+    status << "valid source=camera surface_x=" << err.surface_distance_m
            << " raw_surface_x=" << representative_x
            << " legacy_x=" << err.x_error
            << " fallback_standoff=" << target_standoff_distance_
@@ -657,7 +596,7 @@ void PCDetector::cloudCallback(const CloudMsg::ConstSharedPtr &msg) {
   if (debug_log_) {
     RCLCPP_INFO_THROTTLE(
         this->get_logger(), *this->get_clock(), 300,
-        "pc_error valid=1 surface_x=%.4fm legacy_x=%.4fm "
+        "pc_error valid=1 source=camera surface_x=%.4fm legacy_x=%.4fm "
         "fallback_standoff=%.3fm yaw_valid=%d yaw=%.2fdeg init=%.4fm "
         "front=%zu(%.1f%%)",
         err.surface_distance_m, err.x_error, target_standoff_distance_, yaw_ok,

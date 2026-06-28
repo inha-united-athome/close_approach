@@ -80,6 +80,19 @@ public:
           std::lock_guard<std::mutex> lock(mutex_);
           pc_status_ = msg->data;
         });
+    lidar_sub_ = this->create_subscription<ApproachError>(
+        "/approach/lidar_error", qos_rel,
+        [this](const ApproachError::SharedPtr msg) {
+          std::lock_guard<std::mutex> lock(mutex_);
+          lidar_ = *msg;
+          has_lidar_ = true;
+        });
+    lidar_debug_sub_ = this->create_subscription<std_msgs::msg::String>(
+        "/approach/lidar_debug", qos_rel,
+        [this](const std_msgs::msg::String::SharedPtr msg) {
+          std::lock_guard<std::mutex> lock(mutex_);
+          lidar_status_ = msg->data;
+        });
     control_sub_ = this->create_subscription<ApproachError>(
         "/approach/control_error", qos_rel,
         [this](const ApproachError::SharedPtr msg) {
@@ -180,13 +193,16 @@ private:
     sample_index_ = 0;
     has_edge_ = false;
     has_pc_ = false;
+    has_lidar_ = false;
     has_control_ = false;
     has_cmd_ = false;
     has_image_ = false;
     has_cloud_ = false;
     pc_status_ = "none";
+    lidar_status_ = "none";
     edge_ = ApproachError{};
     pc_ = ApproachError{};
+    lidar_ = ApproachError{};
     control_ = ApproachError{};
     cmd_ = geometry_msgs::msg::Twist{};
     image_ = ImageMsg{};
@@ -217,6 +233,7 @@ private:
     csv_ << "sample,t_sec,state,"
             "edge_stamp,edge_valid,edge_theta_rad,edge_theta_deg,edge_mean_y_px,"
             "pc_stamp,pc_valid,pc_surface_x,pc_x_error,pc_y_error,pc_status,"
+            "lidar_stamp,lidar_valid,lidar_surface_x,lidar_x_error,lidar_status,"
             "control_stamp,control_valid,control_x_error,control_theta_rad,control_theta_deg,"
             "cmd_vx,cmd_wz,image_file,pcd_file\n";
     csv_.flush();
@@ -299,7 +316,11 @@ private:
          << (has_pc_ ? stampSec(pc_.header) : 0.0) << ','
          << (has_pc_ && pc_.valid) << ',' << pc_.surface_distance_m << ','
          << pc_.x_error << ',' << pc_.y_error << ',' << csvToken(pc_status_)
-         << ',' << (has_control_ ? stampSec(control_.header) : 0.0) << ','
+         << ',' << (has_lidar_ ? stampSec(lidar_.header) : 0.0) << ','
+         << (has_lidar_ && lidar_.valid) << ','
+         << lidar_.surface_distance_m << ',' << lidar_.x_error << ','
+         << csvToken(lidar_status_) << ','
+         << (has_control_ ? stampSec(control_.header) : 0.0) << ','
          << (has_control_ && control_.valid) << ',' << control_.x_error << ','
          << control_.theta_error << ',' << deg(control_.theta_error) << ','
          << (has_cmd_ ? cmd_.linear.x : 0.0) << ','
@@ -319,6 +340,8 @@ private:
   rclcpp::Subscription<ApproachError>::SharedPtr edge_sub_;
   rclcpp::Subscription<ApproachError>::SharedPtr pc_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr pc_debug_sub_;
+  rclcpp::Subscription<ApproachError>::SharedPtr lidar_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr lidar_debug_sub_;
   rclcpp::Subscription<ApproachError>::SharedPtr control_sub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
   rclcpp::Subscription<ImageMsg>::SharedPtr image_sub_;
@@ -342,14 +365,17 @@ private:
 
   std::string state_ = "IDLE";
   std::string pc_status_ = "none";
+  std::string lidar_status_ = "none";
   ApproachError edge_;
   ApproachError pc_;
+  ApproachError lidar_;
   ApproachError control_;
   geometry_msgs::msg::Twist cmd_;
   ImageMsg image_;
   CloudMsg cloud_;
   bool has_edge_ = false;
   bool has_pc_ = false;
+  bool has_lidar_ = false;
   bool has_control_ = false;
   bool has_cmd_ = false;
   bool has_image_ = false;

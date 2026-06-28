@@ -1,8 +1,6 @@
 pc_detector:
   ros__parameters:
     cloud_topic:  "/camera/camera_head/depth/color/points"
-    lidar_topic:  "/livox/lidar"
-    use_lidar:    true          # false면 LiDAR 구독·융합 안 함 (뎁스 카메라만)
     info_topic:   "/camera/camera_head/color/camera_info"
     target_frame: "base_nav"
     odom_frame:   "odom"
@@ -76,5 +74,4 @@ pc_detector:
     spike_dx_max:      0.15
 
     max_consecutive_outliers: 5
-    lidar_max_age_sec:       0.3
     debug_log:               true
